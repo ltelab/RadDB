@@ -32,14 +32,17 @@ import raddb.viz.plot as vp
 from raddb.lut import DEFAULT_BEAMWIDTH_DEG, cappi_chords, gate_corner_table
 from raddb.main import RadDB
 from raddb.tests.conftest import (
+    FMI_EPSG,
     PLOT_GEOMETRY,
     PLOT_RADAR,
-    SWISS_EPSG,
+    RADAR,
+    RADAR_B,
     US_EPSG,
     US_SITE,
     build_datatree,
 )
 from raddb.viz.plot import (
+    PLOT_DEFAULTS,
     _beamwidth,
     _KmFormatter,
     _line_endpoints,
@@ -47,7 +50,6 @@ from raddb.viz.plot import (
     plot_aoi_quicklook,
     plot_cappi,
     plot_cross_section,
-    plot_latent_scatter,
     plot_ppi,
     plot_rhi,
     plot_vcs,
@@ -66,7 +68,7 @@ def _n_polys(artist) -> int:
 
 
 def _line_across(site, half=12_000):
-    """A diagonal section line through the radar, in the archive's own metres."""
+    """A diagonal section line through the radar, in the archive's own meters."""
     return ((site[0] - half, site[1] - half), (site[0] + half, site[1] + half))
 
 
@@ -80,7 +82,7 @@ def plot_dtree():
 def plot_gdf(plot_archive_dir):
     """The plotting archive as a GeoDataFrame."""
     pytest.importorskip("geopandas")
-    return RadDB(archive_dir=str(plot_archive_dir), crs=SWISS_EPSG).open(radars=PLOT_RADAR).to_geopandas()
+    return RadDB(archive_dir=str(plot_archive_dir), crs=FMI_EPSG).open(radars=PLOT_RADAR).to_geopandas()
 
 
 # ---------------------------------------------------------------------------
@@ -198,8 +200,8 @@ def test_a_bare_frame_with_an_archive_plots(plot_rdb, plot_archive_dir):
 
 def test_a_multi_radar_frame_needs_the_radar_named(tmp_path, make_datatree):
     """A PPI fixes one sweep of one radar; two radars is ambiguous."""
-    db = RadDB(archive_dir=str(tmp_path), crs=SWISS_EPSG)
-    db.archive(datatree={"A": [make_datatree(24, 20)], "D": [make_datatree(24, 20)]})
+    db = RadDB(archive_dir=str(tmp_path), crs=FMI_EPSG)
+    db.archive(datatree={RADAR: [make_datatree(24, 20)], RADAR_B: [make_datatree(24, 20)]})
 
     with pytest.raises(ValueError, match="radars"):
         plot_ppi(db.open(), sweep=1)
@@ -252,7 +254,7 @@ def test_rhi_picks_a_ray_per_sweep_when_azimuths_jitter(tmp_path):
         jittered[name] = ds.assign_coords(azimuth=ds["azimuth"].to_numpy() + 0.13 * i)
     dt = xr.DataTree.from_dict(jittered)
 
-    db = RadDB(archive_dir=str(tmp_path), crs=SWISS_EPSG)
+    db = RadDB(archive_dir=str(tmp_path), crs=FMI_EPSG)
     db.archive(datatree={PLOT_RADAR: [dt]})
     assert db.get_lut(PLOT_RADAR)["azimuth"].n_unique() == 36 * 4, "fixture should have per-sweep jitter"
 
@@ -378,26 +380,26 @@ def test_vcs_refuses_a_datatree():
         plot_vcs(build_datatree(24, 20), line=((0, 0), (1, 1)))
 
 
-def test_a_geojson_line_honours_its_own_crs(plot_rdb, plot_site, tmp_path):
-    """A GeoJSON is lon/lat by RFC 7946, not archive metres.
+def test_a_geojson_line_honors_its_own_crs(plot_rdb, plot_site, tmp_path):
+    """A GeoJSON is lon/lat by RFC 7946, not archive meters.
 
-    Reading those degrees as LV95 would put the section about 2600 km away.
+    Reading those degrees as projected meters would put the section thousands of km away.
     """
     import pyproj
 
     from raddb.aoi import _to_pyproj_crs
 
-    transformer = pyproj.Transformer.from_crs(_to_pyproj_crs(SWISS_EPSG), _to_pyproj_crs(4326), always_xy=True)
+    transformer = pyproj.Transformer.from_crs(_to_pyproj_crs(FMI_EPSG), _to_pyproj_crs(4326), always_xy=True)
     p1, p2 = _line_across(plot_site)
     a, b = transformer.transform(*p1), transformer.transform(*p2)
     path = tmp_path / "section.geojson"
     path.write_text(json.dumps({"type": "LineString", "coordinates": [list(a), list(b)]}))
 
     from_file = _n_polys(plot_vcs(plot_rdb, line=str(path)))
-    from_metres = _n_polys(plot_vcs(plot_rdb, line=(p1, p2)))
+    from_meters = _n_polys(plot_vcs(plot_rdb, line=(p1, p2)))
 
     assert from_file > 0
-    assert abs(from_file - from_metres) <= 0.02 * from_metres
+    assert abs(from_file - from_meters) <= 0.02 * from_meters
 
 
 def test_a_shapefile_line_is_read(plot_rdb, plot_site, tmp_path):
@@ -444,13 +446,13 @@ def test_a_precut_frame_survives_a_pandas_or_gdf_round_trip(plot_rdb, plot_site,
 def test_line_endpoints_reports_the_source_crs(tmp_path):
     """``_line_endpoints`` returns ``(p1, p2, src_crs)`` so a file's CRS can win."""
     path = tmp_path / "section.geojson"
-    path.write_text(json.dumps({"type": "LineString", "coordinates": [[6.9, 46.0], [7.1, 46.0]]}))
+    path.write_text(json.dumps({"type": "LineString", "coordinates": [[26.9, 62.0], [27.1, 62.0]]}))
 
     p1, p2, src_crs = _line_endpoints(str(path))
 
     assert src_crs == 4326
-    assert p1 == pytest.approx((6.9, 46.0))
-    assert p2 == pytest.approx((7.1, 46.0))
+    assert p1 == pytest.approx((26.9, 62.0))
+    assert p2 == pytest.approx((27.1, 62.0))
 
 
 def test_line_endpoints_from_a_point_pair_declares_no_crs():
@@ -481,7 +483,7 @@ def test_plot_cross_section(plot_rdb, plot_site):
     assert ax.figure is fig
 
 
-def test_plot_cross_section_honours_a_supplied_axes(plot_rdb, plot_site):
+def test_plot_cross_section_honors_a_supplied_axes(plot_rdb, plot_site):
     """It composes like the other four, through ``ax=``."""
     p1, p2 = _line_across(plot_site)
     cs = plot_rdb.extract_cross_section(p1, p2)
@@ -511,20 +513,20 @@ def test_plot_aoi_quicklook(plot_archive_dir, plot_site):
     """Draws the AOI outline and returns the Axes it drew into."""
     aoi = shapely.Point(*plot_site).buffer(10_000)
 
-    _fig, ax = plot_aoi_quicklook(aoi, radars=[PLOT_RADAR], base_path=plot_archive_dir, epsg=SWISS_EPSG)
+    _fig, ax = plot_aoi_quicklook(aoi, radars=[PLOT_RADAR], base_path=plot_archive_dir, epsg=FMI_EPSG)
 
     (x0, x1), (y0, y1) = ax.get_xlim(), ax.get_ylim()
     assert x0 <= plot_site[0] <= x1
     assert y0 <= plot_site[1] <= y1
 
 
-def test_the_quicklook_is_framed_on_the_archive_not_on_switzerland(us_archive_dir):
-    """A Swiss-framed view used to put a US AOI 5,855 km off-map."""
+def test_the_quicklook_is_framed_on_the_archive_not_on_a_fixed_country(us_archive_dir):
+    """A view framed on a fixed home country used to put a US AOI 5,855 km off-map."""
     from raddb.aoi import _reproject_to_aoi
 
     site = _reproject_to_aoi(shapely.Point(*US_SITE), 4326, US_EPSG)
 
-    _fig, ax = plot_aoi_quicklook(site.buffer(20_000), radars=["A"], base_path=us_archive_dir, epsg=US_EPSG)
+    _fig, ax = plot_aoi_quicklook(site.buffer(20_000), radars=[RADAR], base_path=us_archive_dir, epsg=US_EPSG)
 
     (x0, x1), (y0, y1) = ax.get_xlim(), ax.get_ylim()
     assert x0 <= site.x <= x1
@@ -541,7 +543,7 @@ def test_the_quicklook_can_show_the_selected_gates(plot_archive_dir, plot_site, 
         selected=selected.data,
         radars=[PLOT_RADAR],
         base_path=plot_archive_dir,
-        epsg=SWISS_EPSG,
+        epsg=FMI_EPSG,
         show_gates=True,
     )
 
@@ -556,7 +558,7 @@ def test_the_quicklook_saves_to_a_file(plot_archive_dir, plot_site, tmp_path):
         shapely.Point(*plot_site).buffer(10_000),
         radars=[PLOT_RADAR],
         base_path=plot_archive_dir,
-        epsg=SWISS_EPSG,
+        epsg=FMI_EPSG,
         save_path=str(out),
     )
 
@@ -570,7 +572,7 @@ def test_the_quicklook_context_can_be_dropped(plot_archive_dir, plot_site):
         shapely.Point(*plot_site).buffer(10_000),
         radars=[PLOT_RADAR],
         base_path=plot_archive_dir,
-        epsg=SWISS_EPSG,
+        epsg=FMI_EPSG,
         context=None,
     )
 
@@ -578,85 +580,76 @@ def test_the_quicklook_context_can_be_dropped(plot_archive_dir, plot_site):
 
 
 # ---------------------------------------------------------------------------
-# plot_latent_scatter
-# ---------------------------------------------------------------------------
-
-
-# The six panels of the AMT latent-space figure — the layout is fixed at 2 x 3.
-LATENT_VARS = ["DBZH", "ZDR", "KDP", "RHOHV", "PHIDP", "TEMP"]
-
-
-def _latent_frame(n=200):
-    """A synthetic latent space: ``L1``/``L2`` plus one column per panel."""
-    rng = np.random.default_rng(0)
-    data = {"L1": rng.normal(size=n), "L2": rng.normal(size=n)}
-    data.update({v: rng.normal(size=n) for v in LATENT_VARS})
-    return pl.DataFrame(data)
-
-
-def _latent_config():
-    """Six minimal panel descriptors, one per variable."""
-    return [{"var": v, "label": v, "cmap": "viridis", "cbar_kwargs": {}} for v in LATENT_VARS]
-
-
-def test_plot_latent_scatter():
-    """A fixed 2 x 3 grid: six panels, one per polarimetric variable."""
-    fig, axes = plot_latent_scatter(_latent_frame(), _latent_config())
-
-    assert axes.shape == (2, 3)
-    assert fig.get_figwidth() == pytest.approx(6.9)
-    assert all(ax.collections for ax in axes.ravel())
-
-
-def test_plot_latent_scatter_accepts_pandas():
-    """Both frame kinds are coerced at entry, like everything else in the package."""
-    fig, axes = plot_latent_scatter(_latent_frame().to_pandas(), _latent_config())
-
-    assert axes.shape == (2, 3)
-
-
-def test_plot_latent_scatter_requires_exactly_six_panels():
-    """The layout is not derived from the config, so a mismatch is refused."""
-    with pytest.raises(ValueError, match="exactly 6 entries"):
-        plot_latent_scatter(_latent_frame(), _latent_config()[:2])
-
-
-def test_plot_latent_scatter_labels_only_the_outer_axes():
-    """Tick labels live on the bottom row and the first column only."""
-    _fig, axes = plot_latent_scatter(_latent_frame(), _latent_config())
-
-    assert axes[0, 1].get_xlabel() == ""
-    assert axes[1, 1].get_ylabel() == ""
-    assert axes[1, 0].get_xlabel()
-    assert axes[1, 0].get_ylabel()
-
-
-# ---------------------------------------------------------------------------
 # Coordinate frames
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("coords", ["xy", "cartesian", "lonlat", "geo", "projected", "swiss", "lv95", 2056])
+@pytest.mark.parametrize("coords", ["xy", "cartesian", "lonlat", "geo", "projected", 3067])
 def test_every_accepted_coordinate_frame_plots(plot_rdb, coords):
     """Projection and basemap are separate; ``coords`` only chooses the frame."""
     assert _n_polys(plot_ppi(plot_rdb, sweep=1, coords=coords)) > 0
 
 
+def test_an_unstyled_variable_still_plots(plot_rdb):
+    """No entry in PLOT_DEFAULTS is not an error — matplotlib's own defaults apply."""
+    assert "VRADH" in plot_rdb.columns(), "the fixture should carry an extra moment"
+
+    assert _n_polys(plot_ppi(plot_rdb, sweep=1, variable="VRADH")) > 0
+
+
+def test_PLOT_DEFAULTS_is_the_extension_point(plot_rdb):
+    """A package with its own moments registers them; RadDB ships none of its own.
+
+    The discrete-classification machinery stays here because it is not specific to any
+    network — FMI's ``HCLASS`` and a MeteoSwiss ``HC_MCH`` both need it — but the class
+    tables themselves belong to whoever produces the data.
+    """
+    assert not {"HC_MCH", "HC_PYART", "HZT", "TEMP"} & set(PLOT_DEFAULTS), "MCH styling must not ship in raddb"
+
+    PLOT_DEFAULTS["VRADH"] = {
+        "discrete": True,
+        "classes": ["a", "b", "c"],
+        "colors": ["red", "green", "blue"],
+        "label": "Registered elsewhere",
+    }
+    try:
+        artist = plot_ppi(plot_rdb, sweep=1, variable="VRADH")
+
+        cbar_axis = artist.axes.figure.axes[-1].yaxis
+        assert [tick.get_text() for tick in cbar_axis.get_ticklabels()] == ["a", "b", "c"]
+    finally:
+        del PLOT_DEFAULTS["VRADH"]
+
+
+@pytest.mark.parametrize("alias", ["swiss", "lv95", "2056"])
+def test_the_named_lv95_aliases_resolve_to_a_projected_frame(alias):
+    """``coords="swiss"`` is a spelling of ``coords=2056``.
+
+    Checked on the alias table rather than on a plot: an archive only carries the
+    ``x_<epsg>`` columns of the CRS it was written with, and the fixtures are TM35FIN.
+    """
+    assert vp._resolve_coords(alias, None) == ("projected", 2056)
+
+
 def test_lonlat_axes_are_in_degrees(plot_rdb):
-    """``lonlat`` must not leave metres on the axis."""
+    """``lonlat`` must not leave meters on the axis."""
     artist = plot_ppi(plot_rdb, sweep=1, coords="lonlat")
 
     assert -180 <= artist.axes.get_xlim()[0] <= 180
     assert -90 <= artist.axes.get_ylim()[0] <= 90
 
 
-def test_projected_axes_are_lv95_metres(plot_rdb):
-    """``coords=2056`` uses the LUT's own ``x_2056``/``y_2056`` columns."""
-    assert 2.4e6 < plot_ppi(plot_rdb, sweep=1, coords=2056).axes.get_xlim()[0] < 2.9e6
+def test_projected_axes_are_tm35fin_meters(plot_rdb):
+    """``coords=3067`` uses the LUT's own ``x_3067``/``y_3067`` columns.
+
+    The site sits on TM35FIN's central meridian, so its easting is the 500 km false
+    origin and the whole 20 km volume stays inside 470-530 km.
+    """
+    assert 4.7e5 < plot_ppi(plot_rdb, sweep=1, coords=3067).axes.get_xlim()[0] < 5.0e5
 
 
-def test_xy_is_centred_on_the_radar(plot_rdb):
-    """``xy`` is metres from the radar, so the origin is inside the view."""
+def test_xy_is_centered_on_the_radar(plot_rdb):
+    """``xy`` is meters from the radar, so the origin is inside the view."""
     x0, x1 = plot_ppi(plot_rdb, sweep=1, coords="xy").axes.get_xlim()
 
     assert x0 < 0 < x1
@@ -673,7 +666,7 @@ def test_projected_resolves_the_archives_own_crs(plot_archive_dir):
     plain = RadDB(archive_dir=str(plot_archive_dir)).open(radars=PLOT_RADAR)
 
     assert plain._crs is None
-    assert plain.crs().to_epsg() == SWISS_EPSG
+    assert plain.crs().to_epsg() == FMI_EPSG
     assert _n_polys(plot_ppi(plain, sweep=1, coords="projected")) > 0
 
 
@@ -692,7 +685,7 @@ def test_projected_raises_when_nothing_declares_a_crs(plot_rdb):
 def multi_volume_rdb(tmp_path_factory):
     """A two-volume archive, so the volume-selection arguments have something to pick."""
     base = tmp_path_factory.mktemp("multi_vol")
-    db = RadDB(archive_dir=str(base), crs=SWISS_EPSG)
+    db = RadDB(archive_dir=str(base), crs=FMI_EPSG)
     db.archive(
         datatree={str(t): build_datatree(24, 20, n_sweeps=2, vol_time=t) for t in VOL_TIMES},
         radar=PLOT_RADAR,
@@ -741,7 +734,7 @@ def test_datatree_geometry_matches_the_stored_lattice(plot_dtree, plot_archive_d
         axis=1,
     )
 
-    # The lattices are float32, so ~1e-7 relative — a few centimetres at 200 km range.
+    # The lattices are float32, so ~1e-7 relative — a few centimeters at 200 km range.
     # Anything tighter would be testing parquet, not geometry.
     assert np.abs(np.sort(drawn, axis=0) - np.sort(stored, axis=0)).max() < 5e-2
 
@@ -835,7 +828,7 @@ def test_a_wider_declared_beam_reaches_a_cappi_over_more_bins(plot_dtree):
 
 
 # ---------------------------------------------------------------------------
-# _KmFormatter — data in metres, axes labelled in km
+# _KmFormatter — data in meters, axes labeled in km
 # ---------------------------------------------------------------------------
 
 
@@ -900,7 +893,7 @@ def test_real_plots_have_no_duplicate_ticks(plot_rdb, plot_site):
     """Every plot, both axes."""
     artists = [
         plot_ppi(plot_rdb, sweep=1),
-        plot_ppi(plot_rdb, sweep=1, coords="swiss"),
+        plot_ppi(plot_rdb, sweep=1, coords="projected"),
         plot_rhi(plot_rdb, azimuth=0),
         plot_cappi(plot_rdb, altitude=1200),
         plot_vcs(plot_rdb, line=_line_across(plot_site)),

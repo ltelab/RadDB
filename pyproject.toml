@@ -51,8 +51,9 @@ dynamic = ["version"]
 
 [tool.setuptools.packages.find]
 include = ["raddb*"]
-# raddb.mch is the private MCH subpackage (gitignored, separate repo) —
-# excluded here as defense in depth for wheels built from a full checkout.
+# raddb.mch is a private, out-of-tree ingestion subpackage (gitignored, kept in
+# its own repo) — excluded here as defense in depth for wheels built from a
+# checkout that has it present locally.
 exclude = ["raddb.mch*", "raddb.tests*"]
 
 [tool.setuptools_scm]

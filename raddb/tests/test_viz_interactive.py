@@ -1,12 +1,12 @@
 """Tests for :mod:`raddb.viz.interactive` — the ipyleaflet AOI selector.
 
 The module splits into a **pure** dispatch layer (a drawn GeoJSON feature to the matching
-``RadDB`` method) and a widget wrapper.  The dispatch is where the behaviour lives and is
+``RadDB`` method) and a widget wrapper.  The dispatch is where the behavior lives and is
 tested directly with hand-written features; the widget is driven by calling its callbacks
 rather than by simulating clicks, which needs no Jupyter frontend.
 
 The map is WGS-84, so every dispatched call must carry ``crs=4326``.  Reading those
-degrees as archive metres would put the AOI thousands of kilometres away.
+degrees as archive meters would put the AOI thousands of kilometers away.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from raddb.tests.conftest import RADAR
+from raddb.tests.conftest import FI_SITE, RADAR
 from raddb.viz.interactive import (
     AOISelector,
     _crop_from_feature,
@@ -25,9 +25,6 @@ from raddb.viz.interactive import (
 
 pytest.importorskip("ipyleaflet")
 pytest.importorskip("ipywidgets")
-
-# The synthetic fixture's site — ``(longitude, latitude)``, as the map reports it.
-CH_SITE = (7.0, 46.0)
 
 
 def _feature(geometry: dict) -> dict:
@@ -53,12 +50,12 @@ def _box(lon, lat, half=0.05):
 
 def test_is_axis_aligned_box_accepts_a_drawn_rectangle():
     """Four corners over two distinct longitudes and two latitudes."""
-    assert _is_axis_aligned_box(_box(*CH_SITE))
+    assert _is_axis_aligned_box(_box(*FI_SITE))
 
 
 def test_is_axis_aligned_box_accepts_an_unclosed_ring():
     """Some producers omit the repeated closing vertex."""
-    assert _is_axis_aligned_box(_box(*CH_SITE)[:-1])
+    assert _is_axis_aligned_box(_box(*FI_SITE)[:-1])
 
 
 def test_is_axis_aligned_box_rejects_a_rotated_quad():
@@ -83,28 +80,28 @@ def test_is_axis_aligned_box_rejects_an_empty_ring():
 
 def test_a_marker_dispatches_to_crop_around_point(rdb):
     """A drawn marker crops a radius, using the widget's distance."""
-    kind, out = _crop_from_feature(rdb, _feature({"type": "Point", "coordinates": list(CH_SITE)}), distance_m=8_000)
+    kind, out = _crop_from_feature(rdb, _feature({"type": "Point", "coordinates": list(FI_SITE)}), distance_m=8_000)
 
     assert kind == "point"
     assert 0 < len(out) < len(rdb)
 
 
 def test_a_rectangle_dispatches_to_crop_by_bbox(rdb):
-    """An axis-aligned polygon is recognised as a bbox crop."""
-    kind, out = _crop_from_feature(rdb, _feature({"type": "Polygon", "coordinates": [_box(*CH_SITE)]}))
+    """An axis-aligned polygon is recognized as a bbox crop."""
+    kind, out = _crop_from_feature(rdb, _feature({"type": "Polygon", "coordinates": [_box(*FI_SITE)]}))
 
     assert kind == "bbox"
     assert len(out) > 0
 
 
-def test_a_rotated_polygon_dispatches_to_crop_by_polygone(rdb):
+def test_a_rotated_polygon_dispatches_to_crop_by_polygon(rdb):
     """Not axis-aligned, so the full polygon path runs instead."""
     ring = [
-        [CH_SITE[0], CH_SITE[1] + 0.06],
-        [CH_SITE[0] + 0.06, CH_SITE[1]],
-        [CH_SITE[0], CH_SITE[1] - 0.06],
-        [CH_SITE[0] - 0.06, CH_SITE[1]],
-        [CH_SITE[0], CH_SITE[1] + 0.06],
+        [FI_SITE[0], FI_SITE[1] + 0.06],
+        [FI_SITE[0] + 0.06, FI_SITE[1]],
+        [FI_SITE[0], FI_SITE[1] - 0.06],
+        [FI_SITE[0] - 0.06, FI_SITE[1]],
+        [FI_SITE[0], FI_SITE[1] + 0.06],
     ]
 
     kind, out = _crop_from_feature(rdb, _feature({"type": "Polygon", "coordinates": [ring]}))
@@ -115,7 +112,7 @@ def test_a_rotated_polygon_dispatches_to_crop_by_polygone(rdb):
 
 def test_a_polyline_dispatches_to_extract_cross_section(rdb):
     """Only the first and last vertex are used — a section is defined by two points."""
-    line = {"type": "LineString", "coordinates": [[6.9, 46.0], [7.0, 46.0], [7.1, 46.0]]}
+    line = {"type": "LineString", "coordinates": [[26.9, 62.0], [27.0, 62.0], [27.1, 62.0]]}
 
     kind, out = _crop_from_feature(rdb, _feature(line))
 
@@ -125,7 +122,7 @@ def test_a_polyline_dispatches_to_extract_cross_section(rdb):
 
 def test_a_bare_geometry_is_accepted(rdb):
     """The draw control sometimes emits a geometry without the Feature wrapper."""
-    kind, _ = _crop_from_feature(rdb, {"type": "Point", "coordinates": list(CH_SITE)}, distance_m=8_000)
+    kind, _ = _crop_from_feature(rdb, {"type": "Point", "coordinates": list(FI_SITE)}, distance_m=8_000)
 
     assert kind == "point"
 
@@ -140,7 +137,7 @@ def test_the_drawn_coordinates_are_read_as_lonlat(rdb):
     """A marker at the radar site must land on the radar, not 2600 km away."""
     _, at_site = _crop_from_feature(
         rdb,
-        _feature({"type": "Point", "coordinates": list(CH_SITE)}),
+        _feature({"type": "Point", "coordinates": list(FI_SITE)}),
         distance_m=8_000,
     )
     _, elsewhere = _crop_from_feature(
@@ -160,7 +157,7 @@ def test_the_drawn_coordinates_are_read_as_lonlat(rdb):
 
 def test_feature_collection_wraps_a_feature():
     """An already-wrapped feature is reused, not double-wrapped."""
-    feat = _feature({"type": "Point", "coordinates": [7.0, 46.0]})
+    feat = _feature({"type": "Point", "coordinates": list(FI_SITE)})
 
     fc = _feature_collection(feat)
 
@@ -170,20 +167,20 @@ def test_feature_collection_wraps_a_feature():
 
 def test_feature_collection_wraps_a_bare_geometry():
     """A bare geometry gains the Feature envelope GeoJSON readers expect."""
-    fc = _feature_collection({"type": "Point", "coordinates": [7.0, 46.0]})
+    fc = _feature_collection({"type": "Point", "coordinates": list(FI_SITE)})
 
     assert fc["features"][0]["type"] == "Feature"
     assert fc["features"][0]["geometry"]["type"] == "Point"
 
 
 def test_a_saved_collection_reloads_as_an_aoi(tmp_path, rdb):
-    """The round trip the docstring promises: save, then ``crop_by_polygone(path)``."""
-    ring = _box(*CH_SITE)
+    """The round trip the docstring promises: save, then ``crop_by_polygon(path)``."""
+    ring = _box(*FI_SITE)
     fc = _feature_collection(_feature({"type": "Polygon", "coordinates": [ring]}))
     path = tmp_path / "aoi.geojson"
     path.write_text(json.dumps(fc))
 
-    assert len(rdb.crop_by_polygone(str(path))) > 0
+    assert len(rdb.crop_by_polygon(str(path))) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -201,22 +198,22 @@ def test_AOISelector(rdb):
 
 
 def test_AOISelector_init(rdb):
-    """The map centres on the radar sites and marks each one."""
+    """The map centers on the radar sites and marks each one."""
     sel = AOISelector(rdb, point_radius_m=8_000)
 
     lat, lon = sel.map.center
-    assert (round(lat, 3), round(lon, 3)) == (46.0, 7.0)
+    assert (round(lat, 3), round(lon, 3)) == (FI_SITE[1], FI_SITE[0])
     assert sel.radius.value == pytest.approx(8_000.0)
 
 
-def test_the_centre_falls_back_to_switzerland_without_sites(rdb):
+def test_the_center_falls_back_to_switzerland_without_sites(rdb):
     """An unknown radar yields no site, so the map still opens somewhere sensible."""
     sel = AOISelector(rdb, radars=["ZZZZ"])
 
     assert tuple(sel.map.center) == (46.82, 8.23)
 
 
-def test_an_explicit_centre_wins(rdb):
+def test_an_explicit_center_wins(rdb):
     """``center=`` overrides the derived one."""
     assert tuple(AOISelector(rdb, center=(35.3, -97.3)).map.center) == (35.3, -97.3)
 
@@ -225,14 +222,14 @@ def test_a_missing_radar_does_not_break_the_map(rdb):
     """A radar without info is skipped; the map is decoration, not a gate."""
     sel = AOISelector(rdb, radars=[RADAR, "ZZZZ"])
 
-    assert sel._radar_sites([RADAR, "ZZZZ"]) == {RADAR: (46.0, 7.0)}
+    assert sel._radar_sites([RADAR, "ZZZZ"]) == {RADAR: (FI_SITE[1], FI_SITE[0])}
 
 
 def test_the_draw_callback_keeps_the_last_shape(rdb):
     """``created`` and ``edited`` update the stored feature; nothing else does."""
     sel = AOISelector(rdb)
-    first = _feature({"type": "Point", "coordinates": [7.0, 46.0]})
-    second = _feature({"type": "Point", "coordinates": [7.1, 46.1]})
+    first = _feature({"type": "Point", "coordinates": list(FI_SITE)})
+    second = _feature({"type": "Point", "coordinates": [FI_SITE[0] + 0.1, FI_SITE[1] + 0.1]})
 
     sel._on_draw(None, "created", first)
     assert sel.feature is first
@@ -257,7 +254,7 @@ def test_apply_without_a_shape_asks_for_one(rdb, capsys):
 def test_apply_runs_the_crop_and_stores_the_result(rdb):
     """The whole point of the widget: ``.result`` holds a cropped RadDB."""
     sel = AOISelector(rdb, point_radius_m=8_000)
-    sel.feature = _feature({"type": "Point", "coordinates": list(CH_SITE)})
+    sel.feature = _feature({"type": "Point", "coordinates": list(FI_SITE)})
 
     sel._apply()
 
@@ -268,7 +265,7 @@ def test_apply_runs_the_crop_and_stores_the_result(rdb):
 def test_apply_reports_the_sweep_count_from_the_gate_ids(rdb, capsys):
     """``sweep`` is a LUT column, so it is decoded from ``gate_id``, not read off."""
     sel = AOISelector(rdb, point_radius_m=8_000)
-    sel.feature = _feature({"type": "Point", "coordinates": list(CH_SITE)})
+    sel.feature = _feature({"type": "Point", "coordinates": list(FI_SITE)})
 
     sel._apply()
 
@@ -298,16 +295,16 @@ def test_save_without_a_shape_says_so(rdb, capsys):
 
 
 def test_save_writes_a_reloadable_geojson(tmp_path, rdb):
-    """The saved file is a FeatureCollection that ``crop_by_polygone`` accepts."""
+    """The saved file is a FeatureCollection that ``crop_by_polygon`` accepts."""
     sel = AOISelector(rdb)
-    sel.feature = _feature({"type": "Polygon", "coordinates": [_box(*CH_SITE)]})
+    sel.feature = _feature({"type": "Polygon", "coordinates": [_box(*FI_SITE)]})
     sel.save_path.value = str(tmp_path / "aoi.geojson")
 
     sel._save()
 
     saved = json.loads((tmp_path / "aoi.geojson").read_text())
     assert saved["type"] == "FeatureCollection"
-    assert len(rdb.crop_by_polygone(sel.save_path.value)) > 0
+    assert len(rdb.crop_by_polygon(sel.save_path.value)) > 0
 
 
 def test_AOISelector_display(rdb):

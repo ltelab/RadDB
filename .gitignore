@@ -165,7 +165,7 @@ train_interactive.py
 tmp_fig.py
 log.txt
 
-# Private MCH subpackage (versioned in a separate private repo)
+# Private out-of-tree ingestion subpackage (versioned in a separate repo)
 raddb/mch/
 
 pyproject.toml
@@ -173,5 +173,5 @@ pyproject.toml
 # Local AI-assistant working notes (machine-local paths — not for the public repo)
 CLAUDE.md
 
-# Local-only MeteoSwiss demo notebook
+# Local-only network-specific demo notebook (not part of the public tutorials)
 tutorial/06_mch_pipeline.ipynb

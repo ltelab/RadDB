@@ -3,10 +3,10 @@ RadDB Package — Generic radar data archiving and reconstruction.
 
 RadDB archives xarray DataTree volumes as Parquet files with an efficient
 LUT-based layout.  It is network-agnostic: any DataTree with the standard
-xradar coordinate layout can be archived and reconstructed.
+xradar coordinate layout can be archived and reconstructed (FMI, NEXRAD, ...).
 
-MCH/METRANET-specific ingestion code lives in the private ``raddb.mch``
-subpackage (gitignored in the public repository; never imported here).
+Network-specific ingestion code — readers for a national archive's own raw
+format — belongs in a separate package and is never imported here.
 """
 
 from __future__ import annotations
@@ -101,7 +101,6 @@ from raddb.main import RadDB
 from raddb.viz.plot import (
     plot_cappi,
     plot_cross_section,
-    plot_latent_scatter,
     plot_ppi,
     plot_rhi,
     plot_vcs,
@@ -182,7 +181,6 @@ __all__ = [
     "plot_cappi",
     "plot_vcs",
     "plot_cross_section",
-    "plot_latent_scatter",
 ]
 
 _root_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))

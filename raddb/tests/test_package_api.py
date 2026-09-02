@@ -3,7 +3,8 @@
 ``raddb/__init__.py`` declares no callables of its own; what it *is* is a contract:
 the names in ``__all__`` are what downstream code may import.  These tests pin that
 contract, plus the two invariants the module comment calls out — the ``_proj`` import
-must come first, and the private ``raddb.mch`` subpackage must never be pulled in.
+must come first, and the private out-of-tree ingestion subpackage ``raddb.mch`` must
+never be pulled in.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ def test_all_has_no_duplicates():
 def test_star_import_matches_all():
     """``from raddb import *`` exposes exactly ``__all__`` and nothing more."""
     namespace: dict = {}
-    exec("from raddb import *", namespace)  # - the behaviour under test
+    exec("from raddb import *", namespace)  # - the behavior under test
     namespace.pop("__builtins__", None)
     assert sorted(namespace) == sorted(raddb.__all__)
 
@@ -68,7 +69,7 @@ def test_proj_is_the_first_raddb_import():
 
 
 def test_the_private_mch_subpackage_is_not_imported():
-    """``raddb.mch`` is gitignored, excluded from wheels and absent from this checkout."""
+    """Network-specific ingestion lives in its own repo: gitignored, excluded from wheels, absent from checkout."""
     tree = ast.parse(INIT_PATH.read_text(encoding="utf-8"))
     offenders = [
         node.module
@@ -103,5 +104,5 @@ def test_submodules_are_reachable():
     """The documented module layout is importable by path."""
     import importlib
 
-    for name in ("aoi", "discovery", "helper", "hc_mapping", "io_core", "lut", "main", "viz"):
+    for name in ("aoi", "discovery", "helper", "io_core", "lut", "main", "viz"):
         assert importlib.import_module(f"raddb.{name}") is not None

@@ -125,7 +125,7 @@ Every operation returns a **new** ``RadDB``, so calls chain:
         .crop_around_point(point=(-97.278, 35.333), distance=25_000, crs=4326)
     )
 
-Alongside ``crop_around_point`` there are ``crop_by_bbox``, ``crop_by_polygone``
+Alongside ``crop_around_point`` there are ``crop_by_bbox``, ``crop_by_polygon``
 (shapely geometry, GeoDataFrame or a ``.shp`` / ``.geojson`` path) and
 ``extract_cross_section`` for a vertical slice along an arbitrary line.
 

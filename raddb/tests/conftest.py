@@ -4,9 +4,10 @@ Every test in this package is **synthetic**: volumes are built in memory and arc
 written under ``tmp_path``.  Nothing reads a machine-local path, so the suite runs
 unchanged in CI.
 
-The synthetic site sits at 46.0 N / 7.0 E (Switzerland), which is why ``crs=2056``
-(CH1903+/LV95) passes RadDB's measured CRS validation.  A fixture that moves the site must
-move the CRS with it or :func:`raddb.lut.generate_lut_from_datatree` refuses to write.
+The synthetic site sits at 62.0 N / 27.0 E (Finland), which is why ``crs=3067``
+(ETRS89 / TM35FIN, the Finnish national grid) passes RadDB's measured CRS validation.  A
+fixture that moves the site must move the CRS with it or
+:func:`raddb.lut.generate_lut_from_datatree` refuses to write.
 """
 
 from __future__ import annotations
@@ -16,8 +17,12 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-# Default radar name used across the suite.
-RADAR = "A"
+# Default radar name used across the suite — an FMI site, four characters so the
+# base-36 radar code is exercised over its full width rather than a single letter.
+RADAR = "FKUO"
+
+# Second radar, for the multi-radar fixtures.
+RADAR_B = "FANJ"
 
 # Default number of azimuth rays in a synthetic sweep.
 N_AZ = 12
@@ -26,16 +31,20 @@ N_AZ = 12
 N_RNG = 24
 
 # Latitude of the synthetic radar site, in degrees north.
-SITE_LAT = 46.0
+SITE_LAT = 62.0
 
 # Longitude of the synthetic radar site, in degrees east.
-SITE_LON = 7.0
+SITE_LON = 27.0
 
-# Altitude of the synthetic radar site, in metres above sea level.
+# Altitude of the synthetic radar site, in meters above sea level.
 SITE_ALT = 1000.0
 
-# CH1903+/LV95 — the projected CRS valid at the synthetic site.
-SWISS_EPSG = 2056
+# The synthetic radar site as ``(longitude, latitude)`` — the argument order every
+# RadDB entry point that names a *site* uses.
+FI_SITE = (SITE_LON, SITE_LAT)
+
+# ETRS89 / TM35FIN — the projected CRS valid at :data:`FI_SITE`.
+FMI_EPSG = 3067
 
 
 @pytest.fixture(autouse=True)
@@ -69,6 +78,10 @@ def build_datatree(
     All DBZH values are strictly positive so the archive's default ``DBZH > 0``
     clear-sky filter keeps every gate.
 
+    Every sweep also carries a scalar string ``sweep_mode``, the way a real xradar tree
+    does.  It is metadata about the scan, not a moment, and must never reach a POL
+    parquet — keeping it here means every archiving test exercises that rule.
+
     Parameters
     ----------
     n_az, n_rng : int
@@ -80,7 +93,7 @@ def build_datatree(
     vol_time : pandas.Timestamp, optional
         Volume time stamped on every ray.  Defaults to 2024-08-01 12:00:00.
     latitude, longitude, altitude : float
-        Radar site position.  Moving it invalidates ``crs=2056``.
+        Radar site position.  Moving it invalidates ``crs=3067``.
 
     Returns
     -------
@@ -104,7 +117,10 @@ def build_datatree(
                 "ZDR": (["azimuth", "range"], np.ones((n_az, n_rng), np.float32)),
                 "RHOHV": (["azimuth", "range"], np.full((n_az, n_rng), 0.95, np.float32)),
                 "PHIDP": (["azimuth", "range"], np.zeros((n_az, n_rng), np.float32)),
+                "VRADH": (["azimuth", "range"], np.full((n_az, n_rng), -3.5, np.float32)),
                 "time": (["azimuth"], time_vals),
+                # Scalar scan metadata, as a real xradar sweep carries it.
+                "sweep_mode": ((), "azimuth_surveillance"),
             },
             coords={
                 "azimuth": az,
@@ -125,8 +141,8 @@ def build_datatree(
 def relocate(dt: xr.DataTree, longitude: float, latitude: float) -> xr.DataTree:
     """Move a synthetic volume to another place on Earth.
 
-    Used to test the CRS contract: EPSG:2056 is valid at the default Swiss site and
-    invalid — by 20.1% — once the volume is moved to Oklahoma.
+    Used to test the CRS contract: EPSG:3067 is valid at the default Finnish site and
+    invalid — by 36.4% — once the volume is moved to Oklahoma.
 
     Parameters
     ----------
@@ -148,17 +164,17 @@ def relocate(dt: xr.DataTree, longitude: float, latitude: float) -> xr.DataTree:
     return xr.DataTree.from_dict(out)
 
 
-# Rad4Alp antenna drift, measured from real METRANET files. Every ray is reported ~0.0327
+# Antenna drift measured on a real 360-ray C-band network. Every ray is reported ~0.0327
 # degrees past its nominal angle, with a ~0.0069 degree spread. ``gate_id`` resolves azimuth to
-# 0.1 degrees, so an unsnapped drifting ray lands in a neighbouring bin and its gates match no
+# 0.1 degrees, so an unsnapped drifting ray lands in a neighboring bin and its gates match no
 # LUT row.
-MCH_BIAS, MCH_SPREAD = 0.0327, 0.0069
+ANTENNA_BIAS, ANTENNA_SPREAD = 0.0327, 0.0069
 
 # WSR-88D antenna drift: zero-mean, spread up to ~0.045 degrees.
 NEXRAD_SPREAD = 0.045
 
 
-def jitter_azimuths(azimuths, rng, bias: float = 0.0, spread: float = MCH_SPREAD):
+def jitter_azimuths(azimuths, rng, bias: float = 0.0, spread: float = ANTENNA_SPREAD):
     """Move an azimuth array the way a real antenna does between rotations.
 
     Parameters
@@ -181,7 +197,7 @@ def jitter_azimuths(azimuths, rng, bias: float = 0.0, spread: float = MCH_SPREAD
     return (az + bias + rng.normal(0, spread, len(az))) % 360.0
 
 
-def retime(dt: xr.DataTree, when, rng, bias: float = 0.0, spread: float = MCH_SPREAD) -> xr.DataTree:
+def retime(dt: xr.DataTree, when, rng, bias: float = 0.0, spread: float = ANTENNA_SPREAD) -> xr.DataTree:
     """Copy a volume at a new time, with the antenna pointing slightly differently.
 
     This is what a second rotation of the same radar actually looks like: the same scan
@@ -225,8 +241,9 @@ US_EPSG = 32614
 def us_archive_dir(tmp_path, make_datatree):
     """A one-radar archive at KTLX, written in UTM 14N.
 
-    The non-Swiss counterpart to :func:`archive_dir`: any AOI or plotting behaviour that
-    silently assumes LV95 shows up here as a gross error rather than a rounding one.
+    The other-continent counterpart to :func:`archive_dir`: any AOI or plotting behavior
+    that silently assumes the primary frame shows up here as a gross error rather than a
+    rounding one.
 
     Returns
     -------
@@ -269,7 +286,7 @@ def datatree(make_datatree) -> xr.DataTree:
 def archive_dir(tmp_path, make_datatree):
     """Path to a one-radar, one-volume archive written under ``tmp_path``.
 
-    Radar ``A``, ``crs=2056``, LUT and all four geometry lattices present.
+    Radar ``FKUO``, ``crs=3067``, LUT and all four geometry lattices present.
 
     Returns
     -------
@@ -279,7 +296,7 @@ def archive_dir(tmp_path, make_datatree):
     from raddb.main import RadDB
 
     base = tmp_path / "archive"
-    RadDB(archive_dir=str(base), crs=SWISS_EPSG).archive(datatree=make_datatree(), radar=RADAR)
+    RadDB(archive_dir=str(base), crs=FMI_EPSG).archive(datatree=make_datatree(), radar=RADAR)
     return base
 
 
@@ -299,13 +316,13 @@ def archive_dir_two_volumes(tmp_path, make_datatree):
         make_datatree(vol_time=pd.Timestamp("2024-08-01 12:00:00")),
         make_datatree(vol_time=pd.Timestamp("2024-08-01 12:05:00")),
     ]
-    RadDB(archive_dir=str(base), crs=SWISS_EPSG).archive(datatree=volumes, radar=RADAR)
+    RadDB(archive_dir=str(base), crs=FMI_EPSG).archive(datatree=volumes, radar=RADAR)
     return base
 
 
 @pytest.fixture
 def archive_dir_two_radars(tmp_path, make_datatree):
-    """Path to a two-radar archive (``A`` and ``D``), one volume each.
+    """Path to a two-radar archive (``FKUO`` and ``FANJ``), one volume each.
 
     Returns
     -------
@@ -315,8 +332,8 @@ def archive_dir_two_radars(tmp_path, make_datatree):
     from raddb.main import RadDB
 
     base = tmp_path / "archive_multi"
-    RadDB(archive_dir=str(base), crs=SWISS_EPSG).archive(
-        datatree={RADAR: [make_datatree()], "D": [make_datatree()]},
+    RadDB(archive_dir=str(base), crs=FMI_EPSG).archive(
+        datatree={RADAR: [make_datatree()], RADAR_B: [make_datatree()]},
     )
     return base
 
@@ -327,7 +344,7 @@ def archive_dir_two_radars(tmp_path, make_datatree):
 PLOT_GEOMETRY = {"n_az": 72, "n_rng": 60, "n_sweeps": 6}
 
 # Radar name used by the plotting fixtures.
-PLOT_RADAR = "L"
+PLOT_RADAR = "FKOR"
 
 
 @pytest.fixture(scope="session")
@@ -345,7 +362,7 @@ def plot_archive_dir(tmp_path_factory):
     from raddb.main import RadDB
 
     base = tmp_path_factory.mktemp("plot_archive")
-    RadDB(archive_dir=str(base), crs=SWISS_EPSG).archive(
+    RadDB(archive_dir=str(base), crs=FMI_EPSG).archive(
         datatree={PLOT_RADAR: [build_datatree(**PLOT_GEOMETRY)]},
     )
     return base
@@ -362,17 +379,17 @@ def plot_rdb(plot_archive_dir):
     """
     from raddb.main import RadDB
 
-    return RadDB(archive_dir=str(plot_archive_dir), crs=SWISS_EPSG).open(radars=PLOT_RADAR)
+    return RadDB(archive_dir=str(plot_archive_dir), crs=FMI_EPSG).open(radars=PLOT_RADAR)
 
 
 @pytest.fixture(scope="session")
 def plot_site(plot_archive_dir):
-    """The plotting archive's radar site as ``(x, y)`` in EPSG:2056.
+    """The plotting archive's radar site as ``(x, y)`` in EPSG:3067.
 
     Returns
     -------
     tuple of float
-        Projected easting and northing, in metres.
+        Projected easting and northing, in meters.
     """
     import shapely
 
@@ -380,7 +397,7 @@ def plot_site(plot_archive_dir):
     from raddb.main import RadDB
 
     info = RadDB(archive_dir=str(plot_archive_dir)).get_radar_info(PLOT_RADAR)
-    point = _reproject_to_aoi(shapely.Point(info["longitude"], info["latitude"]), 4326, SWISS_EPSG)
+    point = _reproject_to_aoi(shapely.Point(info["longitude"], info["latitude"]), 4326, FMI_EPSG)
     return (point.x, point.y)
 
 
@@ -402,11 +419,11 @@ def db(archive_dir):
     Returns
     -------
     raddb.RadDB
-        Opened with ``crs=2056``.
+        Opened with ``crs=3067``.
     """
     from raddb.main import RadDB
 
-    return RadDB(archive_dir=str(archive_dir), crs=SWISS_EPSG)
+    return RadDB(archive_dir=str(archive_dir), crs=FMI_EPSG)
 
 
 @pytest.fixture
@@ -416,6 +433,6 @@ def rdb(db):
     Returns
     -------
     raddb.RadDB
-        Result of ``db.open(radars="A")``.
+        Result of ``db.open(radars="FKUO")``.
     """
     return db.open(radars=RADAR)

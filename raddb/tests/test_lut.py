@@ -17,7 +17,7 @@ distinct corners instead of eight.
 
 **The CRS contract.** Validity is *measured*, not declared: a 100 km geodesic is projected
 in eight directions and compared with the truth.  Metadata alone would pass EPSG:3857,
-which reports a 100 km baseline as 145 km in Switzerland.
+which reports a 100 km baseline as 216 km in Finland.
 """
 
 from __future__ import annotations
@@ -79,10 +79,11 @@ from raddb.lut import (
     validate_crs_for_site,
 )
 from raddb.tests.conftest import (
-    MCH_BIAS,
+    ANTENNA_BIAS,
+    FI_SITE,
+    FMI_EPSG,
     NEXRAD_SPREAD,
     RADAR,
-    SWISS_EPSG,
     US_EPSG,
     US_SITE,
     build_datatree,
@@ -90,9 +91,6 @@ from raddb.tests.conftest import (
     relocate,
     retime,
 )
-
-# The synthetic fixture's own site — ``(longitude, latitude)``.
-CH_SITE = (7.0, 46.0)
 
 N_AZ, N_RNG, N_SWEEPS = 12, 24, 2
 N_GATES = N_AZ * N_RNG * N_SWEEPS
@@ -108,7 +106,7 @@ def lut_base(tmp_path, make_datatree):
         make_datatree(),
         radar=RADAR,
         output_base_path=str(tmp_path),
-        projection_epsg=SWISS_EPSG,
+        projection_epsg=FMI_EPSG,
     )
     return tmp_path
 
@@ -128,7 +126,7 @@ def real_lut_base(tmp_path_factory):
         build_datatree(n_az=REAL_N_AZ, n_rng=REAL_N_RNG, n_sweeps=REAL_N_SWEEPS),
         radar=RADAR,
         output_base_path=str(base),
-        projection_epsg=SWISS_EPSG,
+        projection_epsg=FMI_EPSG,
     )
     return base
 
@@ -209,7 +207,7 @@ def test_the_round_trip_is_total_over_canonical_names():
 
 
 def test_only_the_ml_aliases_break_the_code_round_trip():
-    """``MLA`` normalises to ``A`` first, so 36 codes can never be emitted."""
+    """``MLA`` normalizes to ``A`` first, so 36 codes can never be emitted."""
     broken = [c for c in range(MAX_RADAR_CODE + 1) if encode_radar_code(decode_radar_code(c)) != c]
 
     assert len(broken) == 36
@@ -257,7 +255,7 @@ def test_a_v1_archive_is_read_without_complaint(tmp_path, make_datatree):
     from raddb.main import RadDB
 
     base = tmp_path / "archive"
-    db = RadDB(archive_dir=str(base), crs=SWISS_EPSG)
+    db = RadDB(archive_dir=str(base), crs=FMI_EPSG)
     db.archive(datatree=make_datatree(), radar="L")
 
     # Rewrite every gate_id back to the v1 encoding (A=0 .. Z=25), as if written long ago.
@@ -283,7 +281,7 @@ def test_generate_gate_id():
 
 
 def test_encode_gate_ids():
-    """The vectorised form, over parallel arrays."""
+    """The vectorized form, over parallel arrays."""
     ids = encode_gate_ids("A", np.array([1, 2]), np.array([45.5, 90.0]), np.array([1000.0, 2000.0]))
 
     assert ids.dtype == np.int64
@@ -390,7 +388,7 @@ def test_the_grid_is_recovered_from_jittered_rays():
     """The measured angles drift; the derived strategy does not."""
     nominal = np.arange(360) + 0.5
 
-    grid = nominal_azimuth_grid(jitter_azimuths(nominal, np.random.default_rng(0), MCH_BIAS))
+    grid = nominal_azimuth_grid(jitter_azimuths(nominal, np.random.default_rng(0), ANTENNA_BIAS))
 
     assert np.array_equal(grid, np.round(nominal * AZIMUTH_SCALE).astype(np.int64))
 
@@ -400,13 +398,13 @@ def test_the_grid_is_stable_across_volumes():
     rng = np.random.default_rng(1)
     nominal = np.arange(360) + 0.5
 
-    grids = [nominal_azimuth_grid(jitter_azimuths(nominal, rng, MCH_BIAS)) for _ in range(25)]
+    grids = [nominal_azimuth_grid(jitter_azimuths(nominal, rng, ANTENNA_BIAS)) for _ in range(25)]
 
     assert all(np.array_equal(g, grids[0]) for g in grids)
 
 
 def test_rounding_is_half_up_not_bankers():
-    """A 720-ray grid puts every centre on ``x.x5``.
+    """A 720-ray grid puts every center on ``x.x5``.
 
     numpy's banker's rounding would turn a uniform 0.5 degree grid into an alternating
     0.4/0.6 one.
@@ -474,7 +472,7 @@ def test_holes_survive_antenna_drift():
     """WSR-88D drift plus two dropped rays.
 
     The grid is the same rotation, but not necessarily the same integers: a 720-ray grid
-    is centred on ``x.x5``, exactly the 0.1 degree rounding boundary, so the ~0.002
+    is centered on ``x.x5``, exactly the 0.1 degree rounding boundary, so the ~0.002
     degrees the two ray sets differ by can tip the whole grid one tenth either way.
     That is a tenth against a half-spacing tolerance of 0.25 degrees, so every ray still
     snaps to its own point.
@@ -506,7 +504,7 @@ def test_too_many_holes_is_not_a_rotation():
 
 @pytest.fixture
 def degree_grid():
-    """A 360-point grid centred on 0.5, 1.5 ... 359.5 degrees, in tenths."""
+    """A 360-point grid centered on 0.5, 1.5 ... 359.5 degrees, in tenths."""
     return nominal_azimuth_grid(np.arange(360) + 0.5)
 
 
@@ -525,7 +523,7 @@ def test_the_seam_is_measured_the_short_way(degree_grid, azimuth, expected):
 
 
 def test_a_ray_below_360_can_snap_to_a_grid_point_at_zero():
-    """With rays centred on 0, 1, 2 ..., 359.7 degrees belongs to 0.0, not 359.0."""
+    """With rays centered on 0, 1, 2 ..., 359.7 degrees belongs to 0.0, not 359.0."""
     grid = nominal_azimuth_grid(np.arange(360) * 1.0)
 
     snapped, distance = snap_azimuths_to_grid([359.7, 359.4, 0.3], grid)
@@ -542,7 +540,7 @@ def test_full_precision_decides_the_match(degree_grid):
 
 def test_snapping_is_a_bijection_under_real_drift(degree_grid):
     """No two rays may collapse onto one grid point, or gates would be lost."""
-    drifted = jitter_azimuths(np.arange(360) + 0.5, np.random.default_rng(3), MCH_BIAS)
+    drifted = jitter_azimuths(np.arange(360) + 0.5, np.random.default_rng(3), ANTENNA_BIAS)
 
     snapped, distance = snap_azimuths_to_grid(drifted, degree_grid)
 
@@ -591,7 +589,7 @@ def test_load_azimuth_grids(tmp_path):
         build_datatree(n_az=360, n_rng=20, n_sweeps=3),
         radar=RADAR,
         output_base_path=str(tmp_path),
-        projection_epsg=SWISS_EPSG,
+        projection_epsg=FMI_EPSG,
     )
 
     grids = load_azimuth_grids(RADAR, tmp_path)
@@ -619,13 +617,13 @@ def test_the_lut_azimuth_column_holds_the_nominal_grid(tmp_path):
         build_datatree(n_az=360, n_rng=20, n_sweeps=2),
         pd.Timestamp("2024-08-01 12:00:00"),
         np.random.default_rng(5),
-        MCH_BIAS,
+        ANTENNA_BIAS,
     )
     generate_lut_from_datatree(
         drifted,
         radar=RADAR,
         output_base_path=str(tmp_path),
-        projection_epsg=SWISS_EPSG,
+        projection_epsg=FMI_EPSG,
     )
 
     lut = load_radar_lut(RADAR, tmp_path)
@@ -688,13 +686,13 @@ def test_cartesian_to_geographic():
         np.array([0.0]),
         np.array([0.0]),
         np.array([0.0]),
-        CH_SITE[1],
-        CH_SITE[0],
+        FI_SITE[1],
+        FI_SITE[0],
         1000.0,
     )
 
-    assert lon[0] == pytest.approx(CH_SITE[0], abs=1e-6)
-    assert lat[0] == pytest.approx(CH_SITE[1], abs=1e-6)
+    assert lon[0] == pytest.approx(FI_SITE[0], abs=1e-6)
+    assert lat[0] == pytest.approx(FI_SITE[1], abs=1e-6)
     assert alt[0] == pytest.approx(1000.0)
 
 
@@ -704,13 +702,13 @@ def test_geographic_conversion_moves_north_for_positive_y():
         np.array([0.0]),
         np.array([10_000.0]),
         np.array([0.0]),
-        CH_SITE[1],
-        CH_SITE[0],
+        FI_SITE[1],
+        FI_SITE[0],
         0.0,
     )
 
-    assert lat[0] > CH_SITE[1]
-    assert lat[0] - CH_SITE[1] == pytest.approx(0.09, abs=0.01)
+    assert lat[0] > FI_SITE[1]
+    assert lat[0] - FI_SITE[1] == pytest.approx(0.09, abs=0.01)
 
 
 # ---------------------------------------------------------------------------
@@ -750,7 +748,7 @@ def test_regenerating_backfills_the_lattices_without_rewriting_the_centroids(lut
         make_datatree(),
         radar=RADAR,
         output_base_path=str(lut_base),
-        projection_epsg=SWISS_EPSG,
+        projection_epsg=FMI_EPSG,
     )
 
     for kind in ("h_plane", "v_plane", "corners"):
@@ -779,7 +777,7 @@ def test_the_info_yaml_records_the_generation_parameters(lut_base):
     assert info["ke"] == pytest.approx(4.0 / 3.0)
     assert info["beamwidth_deg"] == DEFAULT_BEAMWIDTH_DEG
     assert (info["n_gates"], info["n_sweeps"]) == (N_GATES, N_SWEEPS)
-    assert info["crs"] == {"epsg": SWISS_EPSG, "columns": ["x_2056", "y_2056"]}
+    assert info["crs"] == {"epsg": FMI_EPSG, "columns": ["x_3067", "y_3067"]}
 
 
 def test_the_per_sweep_info_block(lut_base):
@@ -799,8 +797,7 @@ def test_the_per_sweep_info_block(lut_base):
 def test_generate_lut_accepts_a_projection_crs_object(tmp_path, make_datatree):
     """A pyproj CRS works where an EPSG int is not available."""
     crs = pyproj.CRS.from_proj4(
-        "+proj=somerc +lat_0=46.9524056 +lon_0=7.4395833 +k_0=1 +x_0=2600000 +y_0=1200000 "
-        "+ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs",
+        "+proj=utm +zone=35 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs",
     )
 
     generate_lut_from_datatree(make_datatree(), radar=RADAR, output_base_path=str(tmp_path), projection_crs=crs)
@@ -817,7 +814,7 @@ def test_generate_lut_records_an_explicit_beamwidth(tmp_path, make_datatree):
         radar=RADAR,
         output_base_path=str(tmp_path),
         beamwidth_deg=1.5,
-        projection_epsg=SWISS_EPSG,
+        projection_epsg=FMI_EPSG,
     )
 
     assert load_radar_info(RADAR, tmp_path)["beamwidth_deg"] == pytest.approx(1.5)
@@ -833,7 +830,7 @@ def test_a_wider_beamwidth_makes_a_taller_gate(tmp_path, make_datatree):
             radar=RADAR,
             output_base_path=str(out),
             beamwidth_deg=beamwidth,
-            projection_epsg=SWISS_EPSG,
+            projection_epsg=FMI_EPSG,
         )
         table = gate_corner_table(RADAR, str(out), kind="corners", sweep=1)
         z = np.stack([table[f"z_rel_{k}"].to_numpy() for k in range(1, 9)], axis=1)
@@ -843,7 +840,7 @@ def test_a_wider_beamwidth_makes_a_taller_gate(tmp_path, make_datatree):
 
 
 def test_the_horizontal_face_is_beamwidth_independent(tmp_path, make_datatree):
-    """A PPI draws the beam *centre*, so its footprint cannot depend on beamwidth."""
+    """A PPI draws the beam *center*, so its footprint cannot depend on beamwidth."""
     nodes = {}
     for beamwidth in (0.8, 1.2):
         out = tmp_path / f"h{beamwidth}"
@@ -852,7 +849,7 @@ def test_the_horizontal_face_is_beamwidth_independent(tmp_path, make_datatree):
             radar=RADAR,
             output_base_path=str(out),
             beamwidth_deg=beamwidth,
-            projection_epsg=SWISS_EPSG,
+            projection_epsg=FMI_EPSG,
         )
         nodes[beamwidth] = load_plane_nodes(RADAR, str(out), "h_plane").sort(["sweep", "az_idx", "rng_idx"])
 
@@ -866,7 +863,7 @@ def test_the_horizontal_face_is_beamwidth_independent(tmp_path, make_datatree):
 
 
 def test_load_plane_nodes(lut_base):
-    """One ``(n_az+1) x (n_rng+1)`` node grid per sweep, at the centre level."""
+    """One ``(n_az+1) x (n_rng+1)`` node grid per sweep, at the center level."""
     nodes = load_plane_nodes(RADAR, lut_base, "h_plane")
 
     assert nodes.height == N_SWEEPS * (N_AZ + 1) * (N_RNG + 1)
@@ -882,7 +879,7 @@ def test_load_plane_nodes_filters_by_sweep(lut_base):
 
 
 def test_the_corner_lattice_has_two_elevation_levels(lut_base):
-    """Bottom and top of the beam; the horizontal face is the centre only."""
+    """Bottom and top of the beam; the horizontal face is the center only."""
     nodes = load_plane_nodes(RADAR, lut_base, "corners")
 
     assert sorted(nodes["el_level"].unique().to_list()) == [-1, 1]
@@ -891,7 +888,7 @@ def test_the_corner_lattice_has_two_elevation_levels(lut_base):
 
 def test_the_lattice_carries_the_projected_columns(lut_base):
     """Otherwise a backfilled lattice would silently lose its projection."""
-    assert {"x_2056", "y_2056"} <= set(load_plane_nodes(RADAR, lut_base, "h_plane").columns)
+    assert {"x_3067", "y_3067"} <= set(load_plane_nodes(RADAR, lut_base, "h_plane").columns)
 
 
 def test_gate_corner_table(lut_base):
@@ -996,11 +993,11 @@ def test_a_centroid_lies_between_its_elevation_levels(lut_base):
     """1 cm tolerance: on a negative-elevation sweep ``z(r)`` has a turning point."""
     table = gate_corner_table(RADAR, lut_base, kind="corners").sort("gate_id")
     lut = load_radar_lut(RADAR, lut_base).sort("gate_id")
-    z_centre = lut["z"].to_numpy()
+    z_center = lut["z"].to_numpy()
     z_corners = np.stack([table[f"z_rel_{k}"].to_numpy() for k in range(1, 9)], axis=1)
 
-    assert (z_centre >= z_corners.min(axis=1) - 0.01).all()
-    assert (z_centre <= z_corners.max(axis=1) + 0.01).all()
+    assert (z_center >= z_corners.min(axis=1) - 0.01).all()
+    assert (z_center <= z_corners.max(axis=1) + 0.01).all()
 
 
 def test_the_vertical_lattice_relates_the_two_altitude_references(lut_base):
@@ -1041,8 +1038,8 @@ def test_each_geometry_file_stays_inside_its_byte_budget(real_lut_base, kind, bu
     assert per_gate <= budget, f"{kind} is {per_gate:.1f} B/gate, over the {budget} B/gate budget"
 
 
-def test_the_lattice_beats_per_gate_materialisation(real_lut_base):
-    """Neighbouring gates share corner nodes, which is where the saving comes from."""
+def test_the_lattice_beats_per_gate_materialization(real_lut_base):
+    """Neighboring gates share corner nodes, which is where the saving comes from."""
     stored = lut_file_path(RADAR, "corners", real_lut_base).stat().st_size
     naive = gate_corner_table(RADAR, real_lut_base, kind="corners").height * 8 * 3 * 4
 
@@ -1060,8 +1057,8 @@ def _sweep_corners(beamwidth_deg=DEFAULT_BEAMWIDTH_DEG):
         np.linspace(1000, 20_000, N_RNG),
         np.linspace(0, 330, N_AZ),
         np.full(N_AZ, 0.5),
-        radar_lat=CH_SITE[1],
-        radar_lon=CH_SITE[0],
+        radar_lat=FI_SITE[1],
+        radar_lon=FI_SITE[0],
         radar_alt=1000.0,
         beamwidth_deg=beamwidth_deg,
     )
@@ -1083,18 +1080,18 @@ def test_compute_sweep_corners_requires_a_beamwidth_for_the_vertical_levels():
         np.linspace(1000, 20_000, N_RNG),
         np.linspace(0, 330, N_AZ),
         np.full(N_AZ, 0.5),
-        radar_lat=CH_SITE[1],
-        radar_lon=CH_SITE[0],
+        radar_lat=FI_SITE[1],
+        radar_lon=FI_SITE[0],
         radar_alt=1000.0,
     )
 
     with pytest.raises(ValueError, match="beamwidth_deg"):
-        build_gate_planes({1: corners}, radar_alt=1000.0, projection_epsg=SWISS_EPSG)
+        build_gate_planes({1: corners}, radar_alt=1000.0, projection_epsg=FMI_EPSG)
 
 
 def test_build_gate_planes():
     """The three lattices come out of one corner mesh, keyed by kind."""
-    planes = build_gate_planes({1: _sweep_corners()}, radar_alt=1000.0, projection_epsg=SWISS_EPSG)
+    planes = build_gate_planes({1: _sweep_corners()}, radar_alt=1000.0, projection_epsg=FMI_EPSG)
 
     assert set(planes) == {"h_plane", "v_plane", "corners"}
     assert all(isinstance(v, pl.DataFrame) and v.height > 0 for v in planes.values())
@@ -1131,7 +1128,7 @@ def test_the_backfill_recovers_the_projection_from_the_lut(lut_base, tmp_path):
 
     ensure_gate_planes(RADAR, tmp_path / "old")
 
-    assert {"x_2056", "y_2056"} <= set(load_plane_nodes(RADAR, tmp_path / "old", "h_plane").columns)
+    assert {"x_3067", "y_3067"} <= set(load_plane_nodes(RADAR, tmp_path / "old", "h_plane").columns)
 
 
 def test_save_sweep_corners(lut_base, tmp_path):
@@ -1195,7 +1192,7 @@ def cappi_base(tmp_path_factory):
         build_datatree(n_az=72, n_rng=60, n_sweeps=6),
         radar=RADAR,
         output_base_path=str(base),
-        projection_epsg=SWISS_EPSG,
+        projection_epsg=FMI_EPSG,
     )
     return base
 
@@ -1277,7 +1274,7 @@ def test_cappi_chords_rejects_an_unknown_height_reference(cappi_base):
 
 def test_suggest_crs():
     """The UTM zone for a site, quoted in every refusal so the user is told what to pass."""
-    assert suggest_crs(*CH_SITE) == 32632  # zone 32N
+    assert suggest_crs(*FI_SITE) == 32635  # zone 35N
     assert suggest_crs(*US_SITE) == 32614  # zone 14N
 
 
@@ -1288,18 +1285,18 @@ def test_suggest_crs_picks_a_south_zone_below_the_equator():
 
 def test_crs_distance_error():
     """The measurement itself: percent error on a projected 100 km geodesic."""
-    assert crs_distance_error(SWISS_EPSG, *CH_SITE) < 0.1
-    assert crs_distance_error(3857, *CH_SITE) > 10.0
+    assert crs_distance_error(FMI_EPSG, *FI_SITE) < 0.1
+    assert crs_distance_error(3857, *FI_SITE) > 10.0
 
 
 @pytest.mark.parametrize(
     ("crs", "site", "accepted"),
     [
-        (2056, CH_SITE, True),  # LV95 at home
-        (32632, CH_SITE, True),  # UTM 32N at home
+        (3067, FI_SITE, True),  # TM35FIN at home
+        (32635, FI_SITE, True),  # UTM 35N at home
         (32614, US_SITE, True),  # UTM 14N at KTLX
-        (2056, US_SITE, False),  # the bug: LV95 in Oklahoma
-        (3857, CH_SITE, False),  # Web Mercator claims the world and distorts hugely
+        (3067, US_SITE, False),  # the bug: a national grid used a continent away
+        (3857, FI_SITE, False),  # Web Mercator claims the world and distorts hugely
         (3857, US_SITE, False),
     ],
 )
@@ -1316,21 +1313,21 @@ def test_an_area_of_use_check_alone_would_pass_web_mercator():
     """EPSG:3857 declares the whole world, so a bounds check lets it through."""
     area = pyproj.CRS.from_epsg(3857).area_of_use
 
-    assert area.west <= CH_SITE[0] <= area.east
-    assert area.south <= CH_SITE[1] <= area.north
-    assert crs_distance_error(3857, *CH_SITE) > 10.0
+    assert area.west <= FI_SITE[0] <= area.east
+    assert area.south <= FI_SITE[1] <= area.north
+    assert crs_distance_error(3857, *FI_SITE) > 10.0
 
 
 def test_a_geographic_crs_is_refused():
-    """Degrees are not metres; EPSG:4326 can never measure a crop radius."""
+    """Degrees are not meters; EPSG:4326 can never measure a crop radius."""
     with pytest.raises(ValueError, match="geographic"):
-        validate_crs_for_site(4326, *CH_SITE)
+        validate_crs_for_site(4326, *FI_SITE)
 
 
 def test_a_refusal_names_a_usable_replacement():
     """The message must tell the user what to pass, not just complain."""
     with pytest.raises(ValueError, match="32614"):
-        validate_crs_for_site(2056, *US_SITE)
+        validate_crs_for_site(3067, *US_SITE)
 
 
 def test_generating_a_lut_without_a_crs_is_refused(tmp_path, make_datatree):
@@ -1340,17 +1337,17 @@ def test_generating_a_lut_without_a_crs_is_refused(tmp_path, make_datatree):
 
 
 def test_that_refusal_also_names_a_usable_crs(tmp_path, make_datatree):
-    """``RadDB(crs=32632)`` is the UTM zone at the synthetic site."""
-    with pytest.raises(ValueError, match=r"RadDB\(crs=32632\)"):
+    """``RadDB(crs=32635)`` is the UTM zone at the synthetic site."""
+    with pytest.raises(ValueError, match=r"RadDB\(crs=32635\)"):
         generate_lut_from_datatree(make_datatree(), radar=RADAR, output_base_path=str(tmp_path))
 
 
 def test_a_crs_invalid_at_the_site_is_refused(tmp_path, make_datatree):
-    """EPSG:2056 outside Switzerland mis-measures distance by ~20%."""
+    """EPSG:3067 outside Finland mis-measures distance by ~36%."""
     dt = relocate(make_datatree(), *US_SITE)
 
     with pytest.raises(ValueError, match="distorts distance"):
-        generate_lut_from_datatree(dt, radar=RADAR, output_base_path=str(tmp_path), projection_epsg=2056)
+        generate_lut_from_datatree(dt, radar=RADAR, output_base_path=str(tmp_path), projection_epsg=3067)
 
 
 def test_the_correct_crs_archives_a_us_radar(tmp_path, make_datatree):
@@ -1402,8 +1399,8 @@ def test_load_radar_info(lut_base):
     info = load_radar_info(RADAR, lut_base)
 
     assert info["radar"] == RADAR
-    assert info["latitude"] == pytest.approx(CH_SITE[1])
-    assert info["longitude"] == pytest.approx(CH_SITE[0])
+    assert info["latitude"] == pytest.approx(FI_SITE[1])
+    assert info["longitude"] == pytest.approx(FI_SITE[0])
 
 
 def test_load_radar_info_raises_for_an_unknown_radar(lut_base):
@@ -1425,22 +1422,22 @@ def test_get_full_sweep_index(lut_base):
 
 def test_add_lut_projection(lut_base):
     """Projected columns are named after the EPSG, so a frame says which one it is in."""
-    lut = load_radar_lut(RADAR, lut_base).drop(["x_2056", "y_2056"])
+    lut = load_radar_lut(RADAR, lut_base).drop(["x_3067", "y_3067"])
 
-    out = add_lut_projection(lut, epsg=32632)
+    out = add_lut_projection(lut, epsg=32635)
 
-    assert {"x_32632", "y_32632"} <= set(out.columns)
-    assert np.isfinite(out["x_32632"].to_numpy()).all()
+    assert {"x_32635", "y_32635"} <= set(out.columns)
+    assert np.isfinite(out["x_32635"].to_numpy()).all()
 
 
 def test_add_lut_projection_returns_the_kind_it_was_given(lut_base):
     """Same-kind-in-same-kind-out, like ``filter_df``."""
     import pandas as pd
 
-    lut = load_radar_lut(RADAR, lut_base).drop(["x_2056", "y_2056"])
+    lut = load_radar_lut(RADAR, lut_base).drop(["x_3067", "y_3067"])
 
-    assert isinstance(add_lut_projection(lut, epsg=32632), pl.DataFrame)
-    assert isinstance(add_lut_projection(lut.to_pandas(), epsg=32632), pd.DataFrame)
+    assert isinstance(add_lut_projection(lut, epsg=32635), pl.DataFrame)
+    assert isinstance(add_lut_projection(lut.to_pandas(), epsg=32635), pd.DataFrame)
 
 
 def test_gate_polygons_geoarrow(lut_base):
@@ -1458,7 +1455,7 @@ def test_geoarrow_field():
     """The field metadata is what makes a column readable as geometry."""
     import pyarrow as pa
 
-    field = geoarrow_field("geometry", pa.float64(), "point", crs="EPSG:2056")
+    field = geoarrow_field("geometry", pa.float64(), "point", crs="EPSG:3067")
 
     assert field.name == "geometry"
     assert field.metadata

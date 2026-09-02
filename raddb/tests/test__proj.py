@@ -60,7 +60,7 @@ def test_fix_foreign_proj_data(monkeypatch, tmp_path):
         assert os.environ["PROJ_DATA"] == str(OWN_PROJ_DIR)
 
 
-def test_legacy_proj_lib_is_honoured(monkeypatch, tmp_path):
+def test_legacy_proj_lib_is_honored(monkeypatch, tmp_path):
     """``PROJ_LIB`` alone (the pre-8.0 name) triggers the repair too."""
     foreign = tmp_path / "legacy_proj"
     foreign.mkdir()

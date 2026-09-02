@@ -1,4 +1,7 @@
-"""PPI, RHI, and latent-space scatter plots for RadDB.
+"""PPI, RHI, CAPPI and vertical-cross-section plots for RadDB.
+
+The four gate-accurate plots are :func:`plot_ppi`, :func:`plot_rhi`,
+:func:`plot_cappi` and :func:`plot_vcs`.
 
 A radar gate is not a rectangle: it is a curved frustum whose footprint depends
 on range, azimuth, elevation and Earth curvature.  Every plot here draws that
@@ -17,17 +20,13 @@ from __future__ import annotations
 
 import contextlib
 
-import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 import polars as pl
 import xarray as xr
-from matplotlib.colors import BoundaryNorm, ListedColormap, TwoSlopeNorm
-
-from raddb.hc_mapping import HC_CLASSES as _HC_CLASSES
-from raddb.hc_mapping import HC_COLORS as _HC_COLORS
+from matplotlib.colors import BoundaryNorm, ListedColormap
 
 # ============================================================================
 # Per-variable plotting defaults
@@ -47,27 +46,41 @@ def _first_available_cmap(*names: str) -> str:
     return names[-1]
 
 
-# Colormaps chosen to match raddb/viz/report_raddb_figures.py (raddb_ppi_ex.png),
-# with two deliberate departures: KDP uses a non-cyclic map (the report's twilight
-# wraps around and is misleading for a signed quantity), and TEMP is a 0-centred
-# diverging (coolwarm's midpoint is grey) via TwoSlopeNorm so 0 °C reads grey.
-
-_PLOT_DEFAULTS: dict[str, dict] = {
+#: Per-variable plot styling, keyed by moment name.  A variable with no entry is drawn
+#: with matplotlib's defaults and labelled with its own name, so plotting never depends
+#: on being listed here.
+#:
+#: **This is the extension point for a network's own moments.**  RadDB ships the ODIM
+#: moments it can style generically; a package that produces others registers them at
+#: import time::
+#:
+#:     from raddb.viz.plot import PLOT_DEFAULTS
+#:
+#:     PLOT_DEFAULTS["HCLASS"] = {
+#:         "discrete": True,
+#:         "classes": ["rain", "wet snow", "graupel", ...],
+#:         "colors": ["royalblue", "yellow", "orangered", ...],
+#:         "label": "Hydrometeor class",
+#:     }
+#:
+#: Recognised keys: ``cmap``, ``vmin``/``vmax``, ``norm`` (a Normalize, or a zero-argument
+#: callable returning a fresh one), ``label`` for the colorbar, and ``discrete`` +
+#: ``classes`` + ``colors`` for a classification, which gets a ListedColormap, a
+#: BoundaryNorm over 1..n and the class names as colorbar ticks.
+#:
+#: KDP deliberately departs from the reference figures: they used a cyclic ``twilight``,
+#: which is misleading for a signed quantity.
+PLOT_DEFAULTS: dict[str, dict] = {
     "DBZH": {"cmap": "HomeyerRainbow", "vmin": 0, "vmax": 60, "label": "Reflectivity [dBz]"},
     "DBZH_raw": {"cmap": "HomeyerRainbow", "vmin": 0, "vmax": 60, "label": "Raw reflectivity [dBz]"},
+    "TH": {"cmap": "HomeyerRainbow", "vmin": 0, "vmax": 60, "label": "Total reflectivity [dBz]"},
     "ZDR": {"cmap": "viridis", "vmin": -2, "vmax": 7, "label": "Differential reflectivity [dB]"},
     "ZDR_raw": {"cmap": "viridis", "vmin": -2, "vmax": 7, "label": "Raw differential reflectivity [dB]"},
     "KDP": {"cmap": "plasma", "vmin": -2, "vmax": 5, "label": "Specific differential phase [°/km]"},
     "RHOHV": {"cmap": "cividis", "vmin": 0.5, "vmax": 1.0, "label": "Co-polar correlation [-]"},
     "PHIDP": {"cmap": "twilight", "vmin": -180, "vmax": 180, "label": "Differential phase [deg]"},
-    "HZT": {"cmap": "viridis", "vmin": 0, "vmax": 5000, "label": "Freezing level height [m]"},
-    "TEMP": {
-        "cmap": "coolwarm",
-        "norm": lambda: TwoSlopeNorm(vmin=-30, vcenter=0, vmax=30),
-        "label": "Temperature [°C]",
-    },
-    "HC_MCH": {"discrete": True, "classes": _HC_CLASSES, "colors": _HC_COLORS, "label": "MCH hydrometeor class"},
-    "HC_PYART": {"discrete": True, "classes": _HC_CLASSES, "colors": _HC_COLORS, "label": "PyART hydrometeor class"},
+    "VRADH": {"cmap": "coolwarm", "label": "Radial velocity [m/s]"},
+    "WRADH": {"cmap": "magma", "label": "Spectrum width [m/s]"},
 }
 
 
@@ -112,7 +125,7 @@ def _resolve_plot_kwargs(variable: str, user_kwargs: dict):
     ``cmap.set_bad("none")`` so NaN (filtered) gates render transparent
     instead of picking up a colormap endpoint.
     """
-    defaults = _PLOT_DEFAULTS.get(variable, {})
+    defaults = PLOT_DEFAULTS.get(variable, {})
     is_discrete = bool(defaults.get("discrete", False))
     class_labels = defaults.get("classes")
     cbar_label = defaults.get("label", variable)
@@ -134,7 +147,7 @@ def _resolve_plot_kwargs(variable: str, user_kwargs: dict):
         if "cmap" in defaults:
             plot_kwargs.setdefault("cmap", defaults["cmap"])
         if "norm" in defaults:
-            # a default norm (e.g. 0-centred diverging); build a fresh instance so
+            # a default norm (e.g. 0-centered diverging); build a fresh instance so
             # it isn't shared/mutated across figures. Skipped if the caller passed
             # any explicit scale (norm / vmin / vmax) to avoid a matplotlib clash.
             if not any(k in plot_kwargs for k in ("norm", "vmin", "vmax")):
@@ -212,7 +225,7 @@ def _border_lines(crs, clip):
     """Context lines clipped to the lon/lat box ``clip``, in ``crs`` (cached).
 
     ``crs`` is whatever frame the plot is drawn in — an EPSG int, or the proj4
-    string of the radar-centred azimuthal frame ``coords="xy"`` uses.  Clipping
+    string of the radar-centered azimuthal frame ``coords="xy"`` uses.  Clipping
     before reprojecting keeps it local, which matters for frames that are only
     valid near their own area (LV95, a single UTM zone).
     """
@@ -236,8 +249,8 @@ def _draw_borders(ax, mode, epsg, info, reach_deg: float = 3.0):
     """Draw country borders around the radar site, in the plot's own frame.
 
     Works for every ``coords`` value, not only the Swiss projected one: ``"xy"``
-    reprojects through an azimuthal-equidistant frame centred on the radar, which
-    is what the LUT's radar-relative metres already are.
+    reprojects through an azimuthal-equidistant frame centered on the radar, which
+    is what the LUT's radar-relative meters already are.
     """
     if info is None:
         return
@@ -366,7 +379,7 @@ def _beamwidth(src):
 
 
 def _resolve_frame(data, archive_dir=None):
-    """Normalise a plot input to a :class:`_Source`.
+    """Normalize a plot input to a :class:`_Source`.
 
     Accepts a :class:`~raddb.main.RadDB`, a polars or pandas frame, a
     GeoDataFrame, or an ``xr.DataTree`` / ``xr.Dataset``.
@@ -508,7 +521,7 @@ _COORD_ALIASES = {
 def _resolve_coords(coords, crs):
     """Map the user's ``coords`` to ``(mode, epsg)``.
 
-    ``mode`` is ``"xy"`` (metres from the radar), ``"lonlat"`` (WGS-84 degrees)
+    ``mode`` is ``"xy"`` (meters from the radar), ``"lonlat"`` (WGS-84 degrees)
     or ``"projected"`` (the LUT's ``x_<epsg>`` / ``y_<epsg>`` columns).
     """
     if isinstance(coords, (int, np.integer)) and not isinstance(coords, bool):
@@ -535,7 +548,7 @@ def _corner_vertices(tbl: pl.DataFrame, n_corners: int, mode: str, epsg, info):
 
     ``tbl`` is a :func:`raddb.lut.gate_corner_table` result for the ``h_plane``
     (4 corners).  ``mode`` selects the output frame; ``lonlat`` is derived from
-    the radar-relative metres with the same spherical model the LUT was built
+    the radar-relative meters with the same spherical model the LUT was built
     with, so it stays consistent with the stored ``latitude``/``longitude``.
     """
     if mode == "projected":
@@ -575,7 +588,7 @@ def _join_corners(df: pl.DataFrame, tbl: pl.DataFrame, variable: str):
 
     Returns ``(values, corner table)`` in matching row order.  Gates whose
     variable is NaN, or that the LUT has no geometry for, are dropped — drawing
-    them would paint the colormap's "bad" colour over real data.
+    them would paint the colormap's "bad" color over real data.
     """
     if variable not in df.columns:
         raise KeyError(f"variable {variable!r} not in the data; have {df.columns}.")
@@ -667,7 +680,7 @@ def _dt_h_vertices(ds, mode, epsg, info):
     complex-plane azimuth edges, ``antenna_vectors_to_cartesian`` at ``ke=4/3`` —
     so the result matches the stored geometry without reading any file.
 
-    Takes no beamwidth: the horizontal face sits at the beam *centre*, so it is
+    Takes no beamwidth: the horizontal face sits at the beam *center*, so it is
     beamwidth-independent (verified: 0.8 deg and 1.2 deg give identical nodes).
     """
     from raddb.lut import (
@@ -737,7 +750,7 @@ def _dt_v_vertices(ds, height, info, beamwidth_deg):
 
 
 def _project_nodes_xy(x, y, epsg, info):
-    """Radar-relative metres -> a projected CRS, for DataTree-computed geometry."""
+    """Radar-relative meters -> a projected CRS, for DataTree-computed geometry."""
     import pyproj
 
     from raddb.aoi import _to_pyproj_crs
@@ -940,7 +953,7 @@ def _dt_sweep_chords(ds, z0, site_alt, beamwidth_deg):
 
 
 class _KmFormatter(mticker.Formatter):
-    """Tick labels in km, from axis data held in metres.
+    """Tick labels in km, from axis data held in meters.
 
     The decimals come from the tick spacing matplotlib actually chose.  A fixed
     ``.0f`` silently collapses adjacent labels whenever that step drops below
@@ -984,7 +997,7 @@ class _KmFormatter(mticker.Formatter):
 
 
 def _draw_polygons(ax, verts, values, plot_kwargs, edgecolor, rasterized):
-    """Add a PolyCollection of gate polygons coloured by ``values``."""
+    """Add a PolyCollection of gate polygons colored by ``values``."""
     from matplotlib.collections import PolyCollection
 
     pc = PolyCollection(
@@ -1012,7 +1025,7 @@ def _finish_map_axes(ax, mode, epsg, verts, site_xy, xlim, ylim, add_range_rings
         ax.set_ylabel("Latitude [°]")
         scale = 1.0
     else:
-        # Native metres on the axis, km on the tick labels.
+        # Native meters on the axis, km on the tick labels.
         ox, oy = (2e6, 1e6) if epsg == 2056 else (0.0, 0.0)
         ax.xaxis.set_major_formatter(_KmFormatter(ox))
         ax.yaxis.set_major_formatter(_KmFormatter(oy))
@@ -1043,8 +1056,8 @@ def _finish_map_axes(ax, mode, epsg, verts, site_xy, xlim, ylim, add_range_rings
     ax.set_aspect("equal")
     ax.grid(True, alpha=0.3)
 
-    # Default view: a square centred on the radar, sized by the furthest gate
-    # drawn.  A plain data bounding box would be pulled off-centre by a handful
+    # Default view: a square centered on the radar, sized by the furthest gate
+    # drawn.  A plain data bounding box would be pulled off-center by a handful
     # of distant echoes, and would differ between variables and time steps —
     # this keeps panels comparable and the radar where the eye expects it.
     if site_xy is not None and (xlim is None or ylim is None):
@@ -1120,7 +1133,7 @@ def plot_aoi_quicklook(
         Selected gates carrying ``x`` / ``y`` in the AOI CRS.  Only scattered when
         ``show_gates=True`` — off by default so the map stays readable.
     radars : list of str, optional
-        Radar letters to mark (needs ``base_path`` to load their site coords).
+        Radar names to mark (needs ``base_path`` to load their site coords).
     base_path : str or Path, optional
         RadDB archive base directory, for loading radar site coordinates.
     context : str, shapely geometry, GeoDataFrame, or None
@@ -1140,7 +1153,7 @@ def plot_aoi_quicklook(
         Scatter the selected gate centroids (default False).
     gate_sample : int
         Cap the number of scattered centroids (random subsample); ``None`` = all.
-    xlim, ylim : (min, max) in EPSG:2056 metres, optional
+    xlim, ylim : (min, max) in EPSG:2056 meters, optional
         Axis limits.  ``xlim`` defaults to auto (fills the context/AOI extent);
         ``ylim`` defaults to the Swiss north band (1.04-1.31 Mm ~ North 40-310 km).
         Pass ``None`` to either for auto-framing of that axis.
@@ -1194,7 +1207,7 @@ def plot_aoi_quicklook(
             sites[r] = (pt.x, pt.y)
 
     # --- optional selected gate centroids ---
-    # A cross-sectioned frame carries both x/y (metres from the radar) and
+    # A cross-sectioned frame carries both x/y (meters from the radar) and
     # x_<epsg>/y_<epsg>; this map is drawn in the projected frame, so prefer
     # those and fall back to plain x/y for a plain crop.
     _xc, _yc = f"x_{frame_epsg}", f"y_{frame_epsg}"
@@ -1323,7 +1336,7 @@ def _draw_aoi_outline(ax, geom, color="red"):
 
 
 # ============================================================================
-# Vertical cross-section (arbitrary line, from crop_cross_section)
+# Vertical cross-section (arbitrary line, from extract_cross_section)
 # ============================================================================
 
 
@@ -1339,10 +1352,10 @@ def plot_cross_section(
     ylim=None,
     **plot_kwargs,
 ):
-    """Render a vertical cross-section from a :meth:`RadDB.crop_cross_section` result.
+    """Render a vertical cross-section from a :meth:`RadDB.extract_cross_section` result.
 
     Each row's ``cs_polygon`` — the gate's 4-corner polygon in the
-    (distance-along-line, altitude) plane — is drawn as a filled patch coloured
+    (distance-along-line, altitude) plane — is drawn as a filled patch colored
     by ``variable`` (per-variable colormap defaults apply, incl. discrete HC
     classes).  Axes: distance along the section line [km] (from ``p1``) vs
     altitude [km ASL].
@@ -1353,16 +1366,16 @@ def plot_cross_section(
     Parameters
     ----------
     df_cs : pandas.DataFrame
-        Output of :meth:`RadDB.crop_cross_section` (needs ``cs_polygon`` +
+        Output of :meth:`RadDB.extract_cross_section` (needs ``cs_polygon`` +
         ``variable`` columns).
     variable : str
-        Column to colour by (default ``"DBZH"``).
+        Column to color by (default ``"DBZH"``).
     ax : matplotlib Axes, optional
     figsize : tuple
     title : str, optional
     add_colorbar : bool
     edgecolor : matplotlib color
-        Patch edge colour (default ``"none"``; e.g. ``"k"`` to outline gates).
+        Patch edge color (default ``"none"``; e.g. ``"k"`` to outline gates).
     xlim : (dmin_km, dmax_km), optional
         Along-section distance limits in km.
     ylim : (zmin_km, zmax_km), optional
@@ -1377,7 +1390,7 @@ def plot_cross_section(
     from matplotlib.collections import PolyCollection
 
     if "cs_polygon" not in df_cs.columns:
-        raise KeyError("df_cs has no 'cs_polygon' column; use RadDB.crop_cross_section first.")
+        raise KeyError("df_cs has no 'cs_polygon' column; use RadDB.extract_cross_section first.")
     if variable not in df_cs.columns:
         raise KeyError(f"variable {variable!r} not in df_cs columns.")
 
@@ -1513,7 +1526,7 @@ def plot_ppi(
     sweep : int or str
         Sweep number, or ``"sweep_3"``.
     variable : str
-        Column to colour by.  Per-variable colormaps and discrete HC class
+        Column to color by.  Per-variable colormaps and discrete HC class
         colorbars are applied automatically.
     radar : str, optional
         Required only when the frame spans several radars.
@@ -1523,7 +1536,7 @@ def plot_ppi(
     start_time, end_time : optional
         Restrict the candidate volumes before ``timestep`` is applied.
     coords : {"xy", "lonlat", "projected"} or int
-        ``"xy"`` — metres from the radar (ticks in km).  ``"lonlat"`` — WGS-84
+        ``"xy"`` — meters from the radar (ticks in km).  ``"lonlat"`` — WGS-84
         degrees.  ``"projected"`` — the LUT's ``x_<epsg>``/``y_<epsg>`` columns,
         using the RadDB's CRS; an EPSG int selects one directly (``2056`` and
         ``"swiss"`` are the Swiss LV95 frame used by the AOI quicklook).
@@ -1531,11 +1544,11 @@ def plot_ppi(
         Overlay cartopy country borders.  Independent of the coordinate frame.
     archive_dir : str or Path, optional
         Needed only when ``data`` is a bare frame.
-    edgecolor : matplotlib colour
+    edgecolor : matplotlib color
         Gate outline; ``"k"`` to show the individual gate polygons.
     rasterized : bool, optional
-        Rasterise the polygons inside vector output.  Defaults to ``True`` above
-        50 000 gates, where an unrasterised PDF/SVG becomes very large.
+        Rasterize the polygons inside vector output.  Defaults to ``True`` above
+        50 000 gates, where an unrasterized PDF/SVG becomes very large.
     save : str, optional
         Path to save the figure to.
     use_cartopy : bool, optional
@@ -1772,19 +1785,19 @@ def plot_cappi(
 
     Because beam thickness at long range (~1.7 km at 100 km) far exceeds the
     height gained across one range bin, each sweep contributes a **wide
-    contiguous band** of bins and neighbouring sweeps overlap heavily — hence
+    contiguous band** of bins and neighboring sweeps overlap heavily — hence
     ``overlap``.
 
     Parameters
     ----------
     altitude : float
-        Slice altitude in metres, in the reference given by ``height``.
+        Slice altitude in meters, in the reference given by ``height``.
     height : {"asl", "rel"}
         Whether ``altitude`` is above sea level (default) or above the radar.
     overlap : {"nearest", "all"}
         How to resolve sweeps that both sample this altitude at the same ground
         distance.  ``"nearest"`` (default) partitions the ground-distance axis
-        and keeps, in each interval, the beam whose centre is closest to the
+        and keeps, in each interval, the beam whose center is closest to the
         slice — a real measurement, never an average.  ``"all"`` draws every
         contributing gate, so later sweeps paint over earlier ones.
     fill_lowest : bool
@@ -2008,7 +2021,7 @@ def plot_vcs(
             probe.require_base("cutting a cross-section from line=")
             data = _RadDB(archive_dir=str(probe.base), crs=probe.crs)._derive(probe.df)
         p1, p2, file_crs = _line_endpoints(line)
-        # A file states its own CRS; honour it unless the caller overrode it.
+        # A file states its own CRS; honor it unless the caller overrode it.
         data = data.extract_cross_section(
             p1,
             p2,
@@ -2074,12 +2087,12 @@ def _maybe_save(ax, save, kwargs):
 
 
 def _line_endpoints(line):
-    """Normalise ``line`` to ``(p1, p2, src_crs)``.
+    """Normalize ``line`` to ``(p1, p2, src_crs)``.
 
     ``src_crs`` is the CRS the file declared, or ``None`` for points and geometry
     objects, which carry none.  Callers must pass it through: a GeoJSON is
-    lon/lat by RFC 7946, and reading those degrees as LV95 metres would place the
-    section thousands of kilometres away.
+    lon/lat by RFC 7946, and reading those degrees as LV95 meters would place the
+    section thousands of kilometers away.
     """
     from pathlib import Path
 
@@ -2109,7 +2122,7 @@ def _resolve_chord_overlap(chords: pl.DataFrame) -> pl.DataFrame:
     Several sweeps typically intersect the slice altitude over overlapping
     ground-distance intervals.  Split the axis at every chord endpoint and give
     each elementary interval to the chord with the smallest ``dz_center`` — the
-    beam whose centre sits closest to the slice.  Chords are then clipped to the
+    beam whose center sits closest to the slice.  Chords are then clipped to the
     intervals they won.
     """
     d_near = chords["d_near"].to_numpy().astype(np.float64)
@@ -2191,7 +2204,7 @@ def _trim_footprints_to_chord(verts, verts_xy, d_near, d_far):
     """Shorten each h_plane footprint along the beam to ``[d_near, d_far]``.
 
     ``verts`` is the ``(n, 4, 2)`` ring in the output frame; ``verts_xy`` is the
-    same ring in radar-relative metres, where ground distance is simply
+    same ring in radar-relative meters, where ground distance is simply
     ``hypot(x, y)`` — the frame-independent way to locate the cut.
 
     Ring order is :data:`raddb.lut.GATE_RING_OFFSETS`: corners 1 and 4 sit on the
@@ -2219,152 +2232,3 @@ def _trim_footprints_to_chord(verts, verts_xy, d_near, d_far):
         ],
         axis=1,
     )
-
-
-# ============================================================================
-# LATENT SPACE SCATTER (AMT publication figure)
-# ============================================================================
-
-
-def plot_latent_scatter(
-    df: pl.DataFrame | pd.DataFrame,
-    config: list[dict],
-    figsize: tuple[float, float] | None = None,
-    fig_height: float = 4.6,
-    **scatter_kwargs,
-):
-    """Publication-ready 2x3 AMT latent-space scatter figure.
-
-    Creates a 2-row x 3-column figure with width=6.9 inches (AMT full-column
-    width). Each subplot shows a scatter of ``df["L1"]`` vs ``df["L2"]``
-    coloured by one radar variable. A compact inset colorbar with a white
-    semi-transparent background is placed inside each subplot.
-
-    x-tick labels and x-axis labels are shown only on the bottom row.
-    y-tick labels and y-axis labels are shown only on the first column.
-
-    Parameters
-    ----------
-    df : pl.DataFrame or pd.DataFrame
-        Must contain columns ``"L1"``, ``"L2"``, and the variable column
-        named in each panel's ``"var"`` key.
-    config : list of dict
-        Exactly 6 panel descriptors, one per subplot (row-major: panels
-        0-2 fill row 0, panels 3-5 fill row 1). Each dict must have:
-
-        - ``"var"`` : str — column in ``df`` to use for colouring.
-        - ``"label"`` : str — colorbar label text.
-        - ``"cmap"`` : str or Colormap — colormap passed to ``scatter``.
-        - ``"norm"`` : matplotlib Normalize, optional — normalisation.
-        - ``"cbar_kwargs"`` : dict — extra kwargs forwarded to
-          ``fig.colorbar()`` (e.g. ``{"ticks": [...]}``, ``{"extend": "both"}``).
-        - ``"scatter_kwargs"`` : dict, optional — extra kwargs for
-          ``ax.scatter()`` (e.g. ``{"s": 1, "alpha": 0.5}``).
-    figsize : tuple, optional
-        Override figure size. Default ``(6.9, fig_height)``.
-    fig_height : float
-        Figure height in inches. Default ``4.6``.
-    **scatter_kwargs
-        Global fallback kwargs for ``ax.scatter()`` (overridden per-panel
-        by ``config[i]["scatter_kwargs"]``).
-
-    Returns
-    -------
-    fig : matplotlib.figure.Figure
-    axes : ndarray of shape (2, 3)
-
-    Example config
-    --------------
-    config = [
-        {"var": "DBZH",    "label": "DBZH [dBZ]",   "cmap": "turbo",
-         "norm": Normalize(-10, 60), "cbar_kwargs": {}, "scatter_kwargs": {"s": 0.5}},
-        {"var": "ZDR",     "label": "ZDR [dB]",      "cmap": "RdBu_r",
-         "norm": Normalize(-2, 5),  "cbar_kwargs": {}, "scatter_kwargs": {"s": 0.5}},
-        ...
-    ]
-    """
-    if len(config) != 6:
-        raise ValueError(f"config must have exactly 6 entries, got {len(config)}.")
-
-    n_rows, n_cols = 2, 3
-    fw = figsize[0] if figsize is not None else 6.9
-    fh = figsize[1] if figsize is not None else fig_height
-    fig, axes = plt.subplots(
-        n_rows,
-        n_cols,
-        figsize=(fw, fh),
-        gridspec_kw={"hspace": 0, "wspace": 0},
-    )
-
-    # Colorbar inset geometry (in axes-fraction coordinates).
-    cbar_inset_axes = [0.04, 0.87, 0.50, 0.05]
-    cbar_fontsize = 7
-    x_pad = 0.05
-    y_pad = 0.10
-
-    for idx, panel in enumerate(config):
-        row, col = divmod(idx, n_cols)
-        ax = axes[row, col]
-
-        var = panel["var"]
-        cmap = panel.get("cmap", "viridis")
-        norm = panel.get("norm", None)
-        panel_scatter_kw = {**scatter_kwargs, **panel.get("scatter_kwargs", {})}
-
-        m = ax.scatter(
-            df["L1"].to_numpy(),
-            df["L2"].to_numpy(),
-            c=df[var].to_numpy(),
-            cmap=cmap,
-            norm=norm,
-            **panel_scatter_kw,
-        )
-
-        # ---- inset colorbar with white fancy-box background ----
-        cax = ax.inset_axes(cbar_inset_axes)
-        fancybox_zorder = cax.get_zorder() + 1
-        cax.set_zorder(cax.get_zorder() + 2)
-
-        cb = fig.colorbar(
-            m,
-            cax=cax,
-            orientation="horizontal",
-            **panel.get("cbar_kwargs", {}),
-        )
-        cb.set_label(panel["label"], fontsize=cbar_fontsize, labelpad=3.1)
-        cb.ax.xaxis.set_label_position("top")
-        cb.ax.tick_params(labelsize=6, pad=1, length=2)
-        cb.outline.set_linewidth(0.5)
-
-        fancy_box_coords = (cbar_inset_axes[0] - x_pad, cbar_inset_axes[1] - y_pad)
-        fancy_box_width = cbar_inset_axes[2] + 2 * x_pad
-        fancy_box_height = cbar_inset_axes[3] + 2 * y_pad
-        fancy_patch = mpatches.FancyBboxPatch(
-            fancy_box_coords,
-            width=fancy_box_width,
-            height=fancy_box_height,
-            boxstyle="square,pad=0",
-            fc="white",
-            ec="none",
-            lw=0.5,
-            alpha=0.6,
-            transform=ax.transAxes,
-            zorder=fancybox_zorder,
-            clip_on=False,
-        )
-        ax.add_artist(fancy_patch)
-        for spine in ax.spines.values():
-            spine.set_zorder(fancybox_zorder + 2)
-
-        # ---- tick / label visibility ----
-        if row < n_rows - 1:
-            ax.tick_params(labelbottom=False)
-        else:
-            ax.set_xlabel("$L_1$")
-
-        if col > 0:
-            ax.tick_params(labelleft=False)
-        else:
-            ax.set_ylabel("$L_2$")
-
-    return fig, axes

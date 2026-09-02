@@ -6,7 +6,7 @@ about 46 km — a silent 17% error that looked entirely normal on a map.
 
 So the theme throughout is: **every AOI runs in the archive's own CRS**, resolved from
 ``{radar}_info.yaml`` (or recovered from the LUT's ``x_<epsg>`` columns), never defaulted.
-The Swiss and US archives are tested side by side for exactly that reason.
+The Finnish and US archives are tested side by side for exactly that reason.
 """
 
 from __future__ import annotations
@@ -38,11 +38,7 @@ from raddb.aoi import (
     aoi_epsg_for,
 )
 from raddb.main import RadDB
-from raddb.tests.conftest import RADAR, US_EPSG, US_SITE, relocate
-
-# The synthetic fixture's own site — ``(longitude, latitude)``.
-CH_SITE = (7.0, 46.0)
-
+from raddb.tests.conftest import FI_SITE, FMI_EPSG, RADAR, RADAR_B, US_EPSG, US_SITE, relocate
 
 # ---------------------------------------------------------------------------
 # aoi_epsg — the archive's own frame
@@ -51,7 +47,7 @@ CH_SITE = (7.0, 46.0)
 
 def test_aoi_epsg(archive_dir, us_archive_dir):
     """The frame comes from the archive that was written, not from a default."""
-    assert aoi_epsg(archive_dir, RADAR) == SWISS_EPSG
+    assert aoi_epsg(archive_dir, RADAR) == FMI_EPSG
     assert aoi_epsg(us_archive_dir, RADAR) == US_EPSG
 
 
@@ -64,7 +60,7 @@ def test_aoi_epsg_is_recovered_from_the_lut_when_info_has_no_crs_block(archive_d
     info.pop("crs", None)
     info_path.write_text(yaml.safe_dump(info))
 
-    assert aoi_epsg(archive_dir, RADAR) == SWISS_EPSG
+    assert aoi_epsg(archive_dir, RADAR) == FMI_EPSG
 
 
 def test_aoi_epsg_refuses_an_unprojected_archive(tmp_path, archive_dir):
@@ -107,34 +103,34 @@ def test_aoi_epsg_names_the_way_out_in_its_error(archive_dir):
 
 def test_aoi_epsg_for(archive_dir_two_radars):
     """Radars written in the same CRS share it without argument."""
-    assert aoi_epsg_for(archive_dir_two_radars, [RADAR, "D"]) == SWISS_EPSG
+    assert aoi_epsg_for(archive_dir_two_radars, [RADAR, RADAR_B]) == FMI_EPSG
 
 
 def test_mixed_crs_radars_refuse_a_shared_aoi(tmp_path, make_datatree):
     """No silent reprojection: the user must name the common frame."""
     base = tmp_path / "mixed"
-    RadDB(archive_dir=str(base), crs=SWISS_EPSG).archive(
-        datatree={"A": [make_datatree(n_az=24, n_rng=20, n_sweeps=2)]},
+    RadDB(archive_dir=str(base), crs=FMI_EPSG).archive(
+        datatree={RADAR: [make_datatree(n_az=24, n_rng=20, n_sweeps=2)]},
     )
     RadDB(archive_dir=str(base), crs=US_EPSG).archive(
-        datatree={"D": [relocate(make_datatree(n_az=24, n_rng=20, n_sweeps=2), *US_SITE)]},
+        datatree={RADAR_B: [relocate(make_datatree(n_az=24, n_rng=20, n_sweeps=2), *US_SITE)]},
     )
 
-    assert aoi_epsg_for(base, ["A"]) == SWISS_EPSG
-    assert aoi_epsg_for(base, ["D"]) == US_EPSG
+    assert aoi_epsg_for(base, [RADAR]) == FMI_EPSG
+    assert aoi_epsg_for(base, [RADAR_B]) == US_EPSG
     with pytest.raises(ValueError, match="different CRSs"):
-        aoi_epsg_for(base, ["A", "D"])
+        aoi_epsg_for(base, [RADAR, RADAR_B])
 
 
 def test_an_override_wins_over_the_archive(archive_dir):
     """``aoi_crs=`` names a common frame explicitly."""
-    assert aoi_epsg_for(archive_dir, [RADAR], override=32632) == 32632
+    assert aoi_epsg_for(archive_dir, [RADAR], override=32635) == 32635
 
 
 def test_an_override_is_validated_against_every_site(us_archive_dir):
     """An override still has to be valid where the radar actually is."""
     with pytest.raises(ValueError, match="distorts distance"):
-        aoi_epsg_for(us_archive_dir, [RADAR], override=SWISS_EPSG)
+        aoi_epsg_for(us_archive_dir, [RADAR], override=FMI_EPSG)
 
 
 # ---------------------------------------------------------------------------
@@ -153,14 +149,14 @@ def test_lut_centroids_returns_a_fixed_column_set(archive_dir):
 
 def test_lut_centroids_concatenates_radars(archive_dir_two_radars):
     """A multi-radar AOI sees one table spanning both."""
-    centroids = _lut_centroids(archive_dir_two_radars, [RADAR, "D"])
+    centroids = _lut_centroids(archive_dir_two_radars, [RADAR, RADAR_B])
 
-    assert sorted(centroids["radar"].unique().to_list()) == ["A", "D"]
+    assert sorted(centroids["radar"].unique().to_list()) == sorted([RADAR, RADAR_B])
 
 
 def test_lut_centroids_projects_on_the_fly_for_an_override(archive_dir):
     """An ``aoi_crs`` the LUT does not store is computed from latitude/longitude."""
-    centroids = _lut_centroids(archive_dir, [RADAR], epsg=32632)
+    centroids = _lut_centroids(archive_dir, [RADAR], epsg=32635)
 
     assert {"x", "y"} <= set(centroids.columns)
     assert np.isfinite(centroids["x"].to_numpy()).all()
@@ -175,7 +171,7 @@ def test_lut_centroids_raises_on_a_missing_lut(tmp_path):
 def test_resolve_gate_ids_selects_only_gates_inside(archive_dir):
     """A tight buffer around the site keeps a strict subset of the gates."""
     centroids = _lut_centroids(archive_dir, [RADAR])
-    site = _reproject_to_aoi(shapely.Point(*CH_SITE), 4326, SWISS_EPSG)
+    site = _reproject_to_aoi(shapely.Point(*FI_SITE), 4326, FMI_EPSG)
 
     ids = _resolve_gate_ids(centroids, site.buffer(5_000))
 
@@ -194,7 +190,7 @@ def test_resolve_gate_ids_is_empty_outside_the_radar(archive_dir):
 def test_resolve_aoi_centroids_returns_rows_not_just_ids(archive_dir):
     """Callers clip by altitude afterwards, so the rows must survive the filter."""
     centroids = _lut_centroids(archive_dir, [RADAR])
-    site = _reproject_to_aoi(shapely.Point(*CH_SITE), 4326, SWISS_EPSG)
+    site = _reproject_to_aoi(shapely.Point(*FI_SITE), 4326, FMI_EPSG)
 
     sub = _resolve_aoi_centroids(centroids, site.buffer(5_000))
 
@@ -212,14 +208,14 @@ def test_resolve_aoi_centroids_on_an_empty_table(archive_dir):
 def test_a_footprint_selects_the_whole_vertical_column(archive_dir):
     """Intersection runs over every sweep, so one footprint takes the column above it."""
     centroids = _lut_centroids(archive_dir, [RADAR])
-    site = _reproject_to_aoi(shapely.Point(*CH_SITE), 4326, SWISS_EPSG)
+    site = _reproject_to_aoi(shapely.Point(*FI_SITE), 4326, FMI_EPSG)
 
     sub = _resolve_aoi_centroids(centroids, site.buffer(8_000))
 
     assert sorted(sub["sweep"].unique().to_list()) == sorted(centroids["sweep"].unique().to_list())
 
 
-def test_a_crop_radius_is_true_metres(us_archive_dir):
+def test_a_crop_radius_is_true_meters(us_archive_dir):
     """The 17% bug, in one assertion: a 10 km crop must select a 10 km radius.
 
     Truth is a WGS-84 geodesic from the radar to every gate; the projected selection
@@ -308,20 +304,20 @@ def test_reproject_to_aoi_is_a_no_op_when_the_frames_match():
         assert _reproject_to_aoi(geom, crs, 2056) is geom
 
 
-def test_reproject_to_aoi_moves_lonlat_into_metres():
-    """Degrees in, metres out — the failure mode is a section 2600 km away."""
-    projected = _reproject_to_aoi(shapely.Point(*CH_SITE), 4326, SWISS_EPSG)
+def test_reproject_to_aoi_moves_lonlat_into_meters():
+    """Degrees in, meters out — the failure mode is a section thousands of km away."""
+    projected = _reproject_to_aoi(shapely.Point(*FI_SITE), 4326, FMI_EPSG)
 
-    assert 2_400_000 < projected.x < 2_900_000
-    assert 1_000_000 < projected.y < 1_400_000
+    assert 400_000 < projected.x < 600_000
+    assert 6_700_000 < projected.y < 7_000_000
 
 
 def test_reproject_to_aoi_round_trips():
-    """There and back lands within a millimetre."""
-    geom = shapely.Point(*CH_SITE)
+    """There and back lands within a millimeter."""
+    geom = shapely.Point(*FI_SITE)
 
-    there = _reproject_to_aoi(geom, 4326, SWISS_EPSG)
-    back = _reproject_to_aoi(there, SWISS_EPSG, 4326)
+    there = _reproject_to_aoi(geom, 4326, FMI_EPSG)
+    back = _reproject_to_aoi(there, FMI_EPSG, 4326)
 
     assert back.distance(geom) < 1e-7
 
@@ -403,11 +399,11 @@ def _write_geojson(path, geometry, crs_name=None):
 
 
 def test_geojson_defaults_to_wgs84_per_rfc_7946():
-    """A GeoJSON without a ``crs`` member is lon/lat, not archive metres."""
+    """A GeoJSON without a ``crs`` member is lon/lat, not archive meters."""
     assert _geojson_crs({"type": "Polygon"}) == 4326
 
 
-def test_geojson_honours_a_legacy_crs_member():
+def test_geojson_honors_a_legacy_crs_member():
     """The pre-RFC ``crs`` member is still read when present."""
     member = {"crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::2056"}}}
 
@@ -416,7 +412,10 @@ def test_geojson_honours_a_legacy_crs_member():
 
 def test_read_geometry_file_reads_a_polygon(tmp_path):
     """A polygon GeoJSON round-trips, and reports WGS-84."""
-    square = {"type": "Polygon", "coordinates": [[[6.9, 45.9], [7.1, 45.9], [7.1, 46.1], [6.9, 46.1], [6.9, 45.9]]]}
+    square = {
+        "type": "Polygon",
+        "coordinates": [[[26.9, 61.9], [27.1, 61.9], [27.1, 62.1], [26.9, 62.1], [26.9, 61.9]]],
+    }
     path = _write_geojson(tmp_path / "aoi.geojson", square)
 
     geom, crs = _read_geometry_file(path)
@@ -427,7 +426,7 @@ def test_read_geometry_file_reads_a_polygon(tmp_path):
 
 def test_read_geometry_file_reads_a_line(tmp_path):
     """Lines matter here: a cross-section is defined by one."""
-    line = {"type": "LineString", "coordinates": [[6.9, 46.0], [7.1, 46.0]]}
+    line = {"type": "LineString", "coordinates": [[26.9, 62.0], [27.1, 62.0]]}
     path = _write_geojson(tmp_path / "cs.geojson", line)
 
     geom, _ = _read_geometry_file(path)
@@ -440,8 +439,8 @@ def test_read_geometry_file_reads_a_feature_collection(tmp_path):
     fc = {
         "type": "FeatureCollection",
         "features": [
-            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [7.0, 46.0]}, "properties": {}},
-            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [7.1, 46.1]}, "properties": {}},
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [27.0, 62.0]}, "properties": {}},
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [27.1, 62.1]}, "properties": {}},
         ],
     }
     path = tmp_path / "fc.geojson"
@@ -453,11 +452,11 @@ def test_read_geometry_file_reads_a_feature_collection(tmp_path):
 
 
 def test_read_geometry_file_rejects_an_unknown_type(tmp_path):
-    """An unrecognised GeoJSON object is refused rather than half-read."""
+    """An unrecognized GeoJSON object is refused rather than half-read."""
     path = tmp_path / "bad.geojson"
     path.write_text(json.dumps({"type": "Topology"}))
 
-    with pytest.raises(ValueError, match="Unrecognised GeoJSON"):
+    with pytest.raises(ValueError, match="Unrecognized GeoJSON"):
         _read_geometry_file(path)
 
 
@@ -498,65 +497,71 @@ def test_prj_crs_ignores_an_empty_prj(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# _load_aoi_polygon — the crop_by_polygone entry point
+# _load_aoi_polygon — the crop_by_polygon entry point
 # ---------------------------------------------------------------------------
 
 
 def test_load_aoi_polygon_from_a_shapely_geometry():
     """A bare geometry with no ``crs`` is taken as already in the AOI frame."""
-    square = shapely.box(2_590_000, 1_190_000, 2_610_000, 1_210_000)
+    square = shapely.box(490_000, 6_864_000, 510_000, 6_884_000)
 
-    assert _load_aoi_polygon(square, aoi_epsg=SWISS_EPSG).equals(square)
+    assert _load_aoi_polygon(square, aoi_epsg=FMI_EPSG).equals(square)
 
 
 def test_load_aoi_polygon_reprojects_a_geojson_from_its_own_crs(tmp_path):
-    """A GeoJSON is lon/lat; reading those degrees as metres lands 2600 km away."""
-    square = {"type": "Polygon", "coordinates": [[[6.9, 45.9], [7.1, 45.9], [7.1, 46.1], [6.9, 46.1], [6.9, 45.9]]]}
+    """A GeoJSON is lon/lat; reading those degrees as meters lands thousands of km away."""
+    square = {
+        "type": "Polygon",
+        "coordinates": [[[26.9, 61.9], [27.1, 61.9], [27.1, 62.1], [26.9, 62.1], [26.9, 61.9]]],
+    }
     path = _write_geojson(tmp_path / "aoi.geojson", square)
 
-    geom = _load_aoi_polygon(path, aoi_epsg=SWISS_EPSG)
+    geom = _load_aoi_polygon(path, aoi_epsg=FMI_EPSG)
 
-    assert geom.contains(_reproject_to_aoi(shapely.Point(*CH_SITE), 4326, SWISS_EPSG))
+    assert geom.contains(_reproject_to_aoi(shapely.Point(*FI_SITE), 4326, FMI_EPSG))
 
 
 def test_an_explicit_crs_overrides_the_files_declaration(tmp_path):
     """``crs=`` wins, for a file that declares the wrong thing."""
-    square = {"type": "Polygon", "coordinates": [[[6.9, 45.9], [7.1, 45.9], [7.1, 46.1], [6.9, 46.1], [6.9, 45.9]]]}
-    path = _write_geojson(tmp_path / "aoi.geojson", square, crs_name="urn:ogc:def:crs:EPSG::2056")
+    square = {
+        "type": "Polygon",
+        "coordinates": [[[26.9, 61.9], [27.1, 61.9], [27.1, 62.1], [26.9, 62.1], [26.9, 61.9]]],
+    }
+    path = _write_geojson(tmp_path / "aoi.geojson", square, crs_name="urn:ogc:def:crs:EPSG::3067")
 
-    declared = _load_aoi_polygon(path, aoi_epsg=SWISS_EPSG)
-    overridden = _load_aoi_polygon(path, crs=4326, aoi_epsg=SWISS_EPSG)
+    declared = _load_aoi_polygon(path, aoi_epsg=FMI_EPSG)
+    overridden = _load_aoi_polygon(path, crs=4326, aoi_epsg=FMI_EPSG)
 
     assert not declared.equals(overridden)
 
 
 def test_load_aoi_polygon_from_a_geodataframe():
-    """A GeoDataFrame's own ``.crs`` is honoured and its parts dissolved."""
+    """A GeoDataFrame's own ``.crs`` is honored and its parts dissolved."""
     gpd = pytest.importorskip("geopandas")
 
-    gdf = gpd.GeoDataFrame(geometry=[shapely.box(6.9, 45.9, 7.1, 46.1)], crs="EPSG:4326")
+    gdf = gpd.GeoDataFrame(geometry=[shapely.box(26.9, 61.9, 27.1, 62.1)], crs="EPSG:4326")
 
-    geom = _load_aoi_polygon(gdf, aoi_epsg=SWISS_EPSG)
+    geom = _load_aoi_polygon(gdf, aoi_epsg=FMI_EPSG)
 
-    assert geom.contains(_reproject_to_aoi(shapely.Point(*CH_SITE), 4326, SWISS_EPSG))
+    assert geom.contains(_reproject_to_aoi(shapely.Point(*FI_SITE), 4326, FMI_EPSG))
 
 
 def test_load_aoi_polygon_rejects_a_line():
     """A crop needs an area; a line defines a cross-section instead."""
     with pytest.raises(ValueError, match="Polygon/MultiPolygon"):
-        _load_aoi_polygon(shapely.LineString([(0, 0), (1, 1)]), aoi_epsg=SWISS_EPSG)
+        _load_aoi_polygon(shapely.LineString([(0, 0), (1, 1)]), aoi_epsg=FMI_EPSG)
 
 
 def test_load_aoi_polygon_rejects_an_empty_geometry():
     """An empty AOI would select every gate or none; refuse it."""
     with pytest.raises(ValueError, match="empty"):
-        _load_aoi_polygon(shapely.Polygon(), aoi_epsg=SWISS_EPSG)
+        _load_aoi_polygon(shapely.Polygon(), aoi_epsg=FMI_EPSG)
 
 
 def test_load_aoi_polygon_rejects_an_unsupported_type():
     """The error must list what is accepted."""
     with pytest.raises(TypeError, match="shapely"):
-        _load_aoi_polygon(42, aoi_epsg=SWISS_EPSG)
+        _load_aoi_polygon(42, aoi_epsg=FMI_EPSG)
 
 
 # ---------------------------------------------------------------------------
@@ -568,12 +573,12 @@ def test_gate_footprints_come_from_the_h_plane_lattice(archive_dir):
     """``aoi.py`` and the plots must draw the same gate, corner for corner.
 
     The old planar / nominal-1-degree construction was off by 32 m mean (125 m max) per
-    corner on radar L and mis-sized high-elevation gates by -23% at sweep 20.
+    corner on a real radar and mis-sized high-elevation gates by -23% at sweep 20.
     """
     from raddb.aoi import _gate_footprints, _lut_cs_table
 
     cs_table = _lut_cs_table(archive_dir, [RADAR]).to_pandas().head(300)
-    footprints = _gate_footprints(cs_table, np.tan(np.deg2rad(0.5)), base_path=archive_dir, epsg=SWISS_EPSG)
+    footprints = _gate_footprints(cs_table, np.tan(np.deg2rad(0.5)), base_path=archive_dir, epsg=FMI_EPSG)
 
     h_plane = RadDB(archive_dir=str(archive_dir)).get_h_plane(RADAR, per_gate=True)
     aligned = pl.DataFrame({"gate_id": cs_table["gate_id"].to_numpy()}).join(
@@ -585,7 +590,7 @@ def test_gate_footprints_come_from_the_h_plane_lattice(archive_dir):
     reference = shapely.polygons(
         np.stack(
             [
-                np.stack([aligned[f"x_2056_{k}"].to_numpy(), aligned[f"y_2056_{k}"].to_numpy()], axis=1)
+                np.stack([aligned[f"x_3067_{k}"].to_numpy(), aligned[f"y_3067_{k}"].to_numpy()], axis=1)
                 for k in range(1, 5)
             ],
             axis=1,
@@ -641,7 +646,7 @@ def test_a_cross_section_height_follows_the_v_plane(plot_rdb, plot_archive_dir, 
 def test_a_crop_matches_a_plain_membership_reference(rdb, archive_dir):
     """The semi-join must select exactly what an ``isin`` filter would."""
     geo = rdb.to_pandas(with_geometry=True)
-    cx, cy = float(geo["x_2056"].median()), float(geo["y_2056"].median())
+    cx, cy = float(geo["x_3067"].median()), float(geo["y_3067"].median())
     bounds = (cx - 5000, cy - 5000, cx + 5000, cy + 5000)
 
     crop = rdb.crop_by_bbox(bounds=bounds)

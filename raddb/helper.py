@@ -78,9 +78,9 @@ RADAR_ALPHABET: str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 #: Maximum radar-name length.  Four base-36 characters is what the ``gate_id``
 #: layout can hold: ``36**4 = 1_679_616`` codes against the ``9_223_371`` slots
 #: int64 leaves above the ``10**12`` gate field, whereas ``36**5`` would need
-#: 60 million.  It fits every single-letter (MeteoSwiss) and four-letter
-#: (NEXRAD ``KTLX``) identifier; five-character ODIM NOD codes such as
-#: ``chlem`` must be aliased to four and kept in the info YAML's ``network``.
+#: 60 million.  It fits both single-letter identifiers and four-letter ones
+#: (NEXRAD ``KTLX``, FMI ``FKUO``); five-character ODIM NOD codes such as
+#: ``fikuo`` must be aliased to four and kept in the info YAML's ``network``.
 RADAR_CODE_LEN: int = 4
 
 _RADAR_NAME_RE = re.compile(rf"^[{RADAR_ALPHABET}]{{1,{RADAR_CODE_LEN}}}$")
@@ -95,9 +95,9 @@ def normalize_radar_name(radar: str) -> str:
     padding in the ``gate_id`` radar code, not part of the name, so ``"0A"``
     and ``"A"`` are the same radar).
 
-    A three-character ``ML*`` name is the MeteoSwiss convention for a
-    single-letter radar and is reduced to that letter (``"MLA"`` -> ``"A"``).
-    Every other name is kept **whole** — ``"KTLX"`` stays ``"KTLX"``.
+    A three-character ``ML*`` name is a legacy alias for a single-letter radar
+    and is reduced to that letter (``"MLA"`` -> ``"A"``).  Every other name is
+    kept **whole** — ``"KTLX"`` stays ``"KTLX"``.
 
     Parameters
     ----------
@@ -131,8 +131,8 @@ def normalize_radar_name(radar: str) -> str:
 
     name = radar.upper().strip()
 
-    # MeteoSwiss "ML<letter>".  Restricted to exactly three characters so that a
-    # genuine four-character name beginning with "ML" is not mistaken for one.
+    # Legacy "ML<letter>" alias.  Restricted to exactly three characters so that
+    # a genuine four-character name beginning with "ML" is not mistaken for one.
     if len(name) == 3 and name.startswith("ML"):
         name = name[-1]
 

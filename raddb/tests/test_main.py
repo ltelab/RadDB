@@ -13,8 +13,8 @@ stays in its own table and is joined on ``gate_id`` by the converters.  A crop
 **selects** rows — it must never widen the frame with LUT columns.
 
 **A CRS is mandatory to write and never needed to read.** There is no default, because a
-wrong projection is silently wrong: EPSG:2056 outside Switzerland mis-measures distance
-by ~20% and the resulting crops look entirely normal.
+wrong projection is silently wrong: EPSG:3067 outside Finland mis-measures distance
+by ~36% and the resulting crops look entirely normal.
 """
 
 from __future__ import annotations
@@ -29,10 +29,16 @@ import shapely
 import xarray as xr
 
 from raddb.main import RadDB, _format_elapsed_time, _format_size, _iter_days, _normalize_time_period
-from raddb.tests.conftest import RADAR, SWISS_EPSG, US_EPSG, US_SITE, build_datatree, relocate
-
-# The synthetic fixture's site — ``(longitude, latitude)``.
-CH_SITE = (7.0, 46.0)
+from raddb.tests.conftest import (
+    FI_SITE,
+    FMI_EPSG,
+    RADAR,
+    RADAR_B,
+    US_EPSG,
+    US_SITE,
+    build_datatree,
+    relocate,
+)
 
 VOL_TIMES = [pd.Timestamp("2024-08-01 12:00:00"), pd.Timestamp("2024-08-02 06:30:00")]
 
@@ -43,8 +49,8 @@ LUT_ONLY_COLUMNS = {
     "x",
     "y",
     "z",
-    "x_2056",
-    "y_2056",
+    "x_3067",
+    "y_3067",
     "azimuth",
     "range",
     "elevation_angle",
@@ -55,7 +61,7 @@ LUT_ONLY_COLUMNS = {
 @pytest.fixture
 def two_volume_rdb(tmp_path):
     """A data-carrying RadDB over a two-volume, one-radar archive."""
-    db = RadDB(archive_dir=str(tmp_path / "arch"), crs=SWISS_EPSG)
+    db = RadDB(archive_dir=str(tmp_path / "arch"), crs=FMI_EPSG)
     db.archive(datatree={str(t): build_datatree(vol_time=t) for t in VOL_TIMES}, radar=RADAR)
     return db.open(radars=RADAR)
 
@@ -72,11 +78,11 @@ def datatree_dir(tmp_path):
 
 
 def _site_xy(db):
-    """The radar site in the archive's own projected metres."""
+    """The radar site in the archive's own projected meters."""
     from raddb.aoi import _reproject_to_aoi
 
     info = db.get_radar_info(RADAR)
-    point = _reproject_to_aoi(shapely.Point(info["longitude"], info["latitude"]), 4326, SWISS_EPSG)
+    point = _reproject_to_aoi(shapely.Point(info["longitude"], info["latitude"]), 4326, FMI_EPSG)
     return (point.x, point.y)
 
 
@@ -87,7 +93,7 @@ def _site_xy(db):
 
 def test_RadDB():
     """An archive-bound instance carries no data until ``open()`` is called."""
-    db = RadDB(archive_dir="/some/where", crs=SWISS_EPSG)
+    db = RadDB(archive_dir="/some/where", crs=FMI_EPSG)
 
     assert db.archive_dir is not None
     with pytest.raises(ValueError):
@@ -96,10 +102,10 @@ def test_RadDB():
 
 def test_RadDB_init(archive_dir):
     """The two constructor arguments are remembered; ``network`` is metadata only."""
-    db = RadDB(archive_dir=str(archive_dir), crs=SWISS_EPSG, network="MeteoSwiss")
+    db = RadDB(archive_dir=str(archive_dir), crs=FMI_EPSG, network="FMI")
 
     assert str(db.archive_dir) == str(archive_dir)
-    assert db.crs().to_epsg() == SWISS_EPSG
+    assert db.crs().to_epsg() == FMI_EPSG
 
 
 def test_a_bare_instance_needs_an_archive_dir_to_read():
@@ -142,7 +148,7 @@ def test_RadDB_archive(tmp_path, datatree):
     """One in-memory volume becomes a LUT plus one POL parquet."""
     out = tmp_path / "arch"
 
-    result = RadDB(archive_dir=str(out), crs=SWISS_EPSG).archive(datatree=datatree, radar=RADAR)
+    result = RadDB(archive_dir=str(out), crs=FMI_EPSG).archive(datatree=datatree, radar=RADAR)
 
     assert (result["n_archived"], result["n_failed"]) == (1, 0)
     assert (out / RADAR / "LUT" / f"{RADAR}_LUT.parquet").exists()
@@ -152,7 +158,7 @@ def test_RadDB_archive(tmp_path, datatree):
 def test_archive_from_a_directory_of_datatrees(tmp_path, datatree_dir):
     """``datatree_dir=`` walks the directory and archives every volume it finds."""
     out = tmp_path / "arch"
-    db = RadDB(archive_dir=str(out), crs=SWISS_EPSG)
+    db = RadDB(archive_dir=str(out), crs=FMI_EPSG)
 
     result = db.archive(datatree_dir=datatree_dir, radar=RADAR)
 
@@ -162,15 +168,15 @@ def test_archive_from_a_directory_of_datatrees(tmp_path, datatree_dir):
 
 def test_archive_resumes_from_its_checkpoint(tmp_path, datatree_dir):
     """A second run re-attempts nothing, which is what makes a 530-volume run resumable."""
-    db = RadDB(archive_dir=str(tmp_path / "arch"), crs=SWISS_EPSG)
+    db = RadDB(archive_dir=str(tmp_path / "arch"), crs=FMI_EPSG)
 
     assert db.archive(datatree_dir=datatree_dir, radar=RADAR)["n_archived"] == 2
     assert db.archive(datatree_dir=datatree_dir, radar=RADAR)["n_archived"] == 0
 
 
-def test_archive_honours_a_time_period(tmp_path, datatree_dir):
+def test_archive_honors_a_time_period(tmp_path, datatree_dir):
     """Only volumes whose filename timestamp falls in the window are read."""
-    result = RadDB(archive_dir=str(tmp_path / "arch"), crs=SWISS_EPSG).archive(
+    result = RadDB(archive_dir=str(tmp_path / "arch"), crs=FMI_EPSG).archive(
         datatree_dir=datatree_dir,
         radar=RADAR,
         time_period=("2024-08-01 00:00", "2024-08-01 23:59"),
@@ -181,7 +187,7 @@ def test_archive_honours_a_time_period(tmp_path, datatree_dir):
 
 def test_archive_infers_the_radar_from_the_filename(tmp_path, datatree_dir):
     """``radar=None`` reads the name off each file, so a mixed directory works."""
-    db = RadDB(archive_dir=str(tmp_path / "arch"), crs=SWISS_EPSG)
+    db = RadDB(archive_dir=str(tmp_path / "arch"), crs=FMI_EPSG)
 
     db.archive(datatree_dir=datatree_dir)
 
@@ -194,7 +200,7 @@ def test_archive_keeps_a_four_letter_radar_name(tmp_path, datatree):
     src = tmp_path / "input"
     src.mkdir()
     datatree.to_netcdf(src / "KTLX_20240101_120000.nc")
-    db = RadDB(archive_dir=str(tmp_path / "arch"), crs=SWISS_EPSG)
+    db = RadDB(archive_dir=str(tmp_path / "arch"), crs=FMI_EPSG)
 
     result = db.archive(datatree_dir=src)
 
@@ -210,7 +216,7 @@ def test_archive_skips_an_unusable_radar_name(tmp_path, datatree):
     datatree.to_netcdf(src / "OVERLONG_20240101_120000.nc")
     out = tmp_path / "arch"
 
-    result = RadDB(archive_dir=str(out), crs=SWISS_EPSG).archive(datatree_dir=src)
+    result = RadDB(archive_dir=str(out), crs=FMI_EPSG).archive(datatree_dir=src)
 
     assert result["n_archived"] == 0
     assert not (out / "N").exists()
@@ -219,7 +225,7 @@ def test_archive_skips_an_unusable_radar_name(tmp_path, datatree):
 def test_archive_needs_exactly_one_source(tmp_path):
     """``datatree_dir`` and ``datatree`` are alternatives, not a pair."""
     with pytest.raises(ValueError, match="exactly one"):
-        RadDB(archive_dir=str(tmp_path), crs=SWISS_EPSG).archive(datatree_dir=tmp_path, datatree=object())
+        RadDB(archive_dir=str(tmp_path), crs=FMI_EPSG).archive(datatree_dir=tmp_path, datatree=object())
 
 
 def test_archive_requires_a_crs(tmp_path, datatree):
@@ -233,9 +239,32 @@ def test_a_rejected_crs_aborts_and_writes_nothing(tmp_path, make_datatree):
     us_volume = relocate(make_datatree(), *US_SITE)
 
     with pytest.raises(ValueError, match="distorts distance"):
-        RadDB(archive_dir=str(tmp_path), crs=SWISS_EPSG).archive(datatree={RADAR: [us_volume]})
+        RadDB(archive_dir=str(tmp_path), crs=FMI_EPSG).archive(datatree={RADAR: [us_volume]})
 
     assert not list(tmp_path.rglob("*POL.parquet"))
+
+
+def test_a_rejected_crs_aborts_a_directory_archive_too(tmp_path, make_datatree):
+    """The file path used to swallow the refusal and write POL files anyway.
+
+    ``_ensure_lut`` re-raises a rejected CRS on purpose, but the ``datatree_dir=``
+    branch caught it under a bare ``except Exception`` and carried on: every volume
+    was written against a LUT that had never been generated, and the run still
+    reported them as archived.
+    """
+    pytest.importorskip("netCDF4")
+    directory = tmp_path / "datatrees"
+    directory.mkdir()
+    for when in VOL_TIMES:
+        relocate(make_datatree(vol_time=when), *US_SITE).to_netcdf(
+            directory / f"{RADAR}_{when:%Y%m%d_%H%M%S}.nc",
+        )
+    out = tmp_path / "arch"
+
+    with pytest.raises(ValueError, match="distorts distance"):
+        RadDB(archive_dir=str(out), crs=FMI_EPSG).archive(datatree_dir=directory, radar=RADAR)
+
+    assert not list(out.rglob("*POL.parquet"))
 
 
 def test_a_valid_crs_archives_a_us_radar(tmp_path, make_datatree):
@@ -255,7 +284,7 @@ def test_an_empty_volume_is_skipped_not_failed(tmp_path, make_datatree):
         ds["DBZH"] = ds["DBZH"].where(False)
         blank[name].dataset = ds
 
-    result = RadDB(archive_dir=str(tmp_path), crs=SWISS_EPSG).archive(datatree=blank, radar=RADAR)
+    result = RadDB(archive_dir=str(tmp_path), crs=FMI_EPSG).archive(datatree=blank, radar=RADAR)
 
     assert (result["n_archived"], result["n_failed"], result["n_skipped"]) == (0, 0, 1)
 
@@ -269,7 +298,7 @@ def test_the_three_counts_sum_to_the_volumes_attempted(tmp_path, make_datatree):
         ds["DBZH"] = ds["DBZH"].where(False)
         empty[name].dataset = ds
 
-    result = RadDB(archive_dir=str(tmp_path), crs=SWISS_EPSG).archive(datatree=[good, empty], radar=RADAR)
+    result = RadDB(archive_dir=str(tmp_path), crs=FMI_EPSG).archive(datatree=[good, empty], radar=RADAR)
 
     assert (result["n_archived"], result["n_failed"], result["n_skipped"]) == (1, 0, 1)
     assert sum((result["n_archived"], result["n_failed"], result["n_skipped"])) == 2
@@ -277,11 +306,11 @@ def test_the_three_counts_sum_to_the_volumes_attempted(tmp_path, make_datatree):
 
 def test_archive_accepts_a_radar_keyed_dict(tmp_path, make_datatree):
     """The multi-radar form, ``{radar: [volumes]}``."""
-    result = RadDB(archive_dir=str(tmp_path), crs=SWISS_EPSG).archive(
-        datatree={"A": [make_datatree()], "D": [make_datatree()]},
+    result = RadDB(archive_dir=str(tmp_path), crs=FMI_EPSG).archive(
+        datatree={RADAR: [make_datatree()], RADAR_B: [make_datatree()]},
     )
 
-    assert sorted(result["radars"]) == ["A", "D"]
+    assert sorted(result["radars"]) == sorted([RADAR, RADAR_B])
 
 
 # ---------------------------------------------------------------------------
@@ -302,14 +331,14 @@ def test_RadDB_get_radar_info(db):
     info = db.get_radar_info(RADAR)
 
     assert info["radar"] == RADAR
-    assert info["crs"]["epsg"] == SWISS_EPSG
+    assert info["crs"]["epsg"] == FMI_EPSG
 
 
 def test_RadDB_add_lut_projection(db):
     """Adds an ``x_<epsg>``/``y_<epsg>`` pair the archive does not already store."""
-    projected = db.add_lut_projection(RADAR, epsg=32632)
+    projected = db.add_lut_projection(RADAR, epsg=32635)
 
-    assert {"x_32632", "y_32632"} <= set(projected.columns)
+    assert {"x_32635", "y_32635"} <= set(projected.columns)
 
 
 def test_RadDB_get_h_plane(db):
@@ -395,14 +424,14 @@ def test_RadDB_export_h_plane_geoparquet(db, tmp_path):
     gdf = gpd.read_parquet(out)
     assert len(gdf) == 12 * 24 * 2
     assert gdf.crs is not None
-    assert gdf.crs.to_epsg() == SWISS_EPSG
+    assert gdf.crs.to_epsg() == FMI_EPSG
     assert gdf.geometry.is_valid.all()
     # Corner order is clockwise in storage; GeoParquet prefers counter-clockwise.
     assert shapely.is_ccw(shapely.get_exterior_ring(gdf.geometry.values)).all()
 
 
 def test_export_h_plane_geoparquet_falls_back_to_wgs84(db, tmp_path):
-    """An EPSG the LUT does not carry falls back rather than writing an unlabelled file."""
+    """An EPSG the LUT does not carry falls back rather than writing an unlabeled file."""
     gpd = pytest.importorskip("geopandas")
     out = tmp_path / "h_plane_4326.parquet"
 
@@ -418,7 +447,7 @@ def test_export_h_plane_geoparquet_falls_back_to_wgs84(db, tmp_path):
 
 def test_RadDB_list_radars(archive_dir_two_radars):
     """The radars an archive holds, sorted."""
-    assert RadDB(archive_dir=str(archive_dir_two_radars)).list_radars() == ["A", "D"]
+    assert RadDB(archive_dir=str(archive_dir_two_radars)).list_radars() == sorted([RADAR, RADAR_B])
 
 
 def test_list_radars_on_an_empty_archive(tmp_path):
@@ -533,7 +562,7 @@ def test_open_needs_no_crs(archive_dir):
     plain = RadDB(archive_dir=str(archive_dir)).open(radars=RADAR)
 
     assert plain._crs is None
-    assert plain.crs().to_epsg() == SWISS_EPSG
+    assert plain.crs().to_epsg() == FMI_EPSG
 
 
 def test_open_narrows_by_time_period(two_volume_rdb):
@@ -553,7 +582,7 @@ def test_open_selects_columns(db):
 
 
 def test_open_applies_filters(db):
-    """``filters=`` runs at read time, so filtered rows are never materialised."""
+    """``filters=`` runs at read time, so filtered rows are never materialized."""
     rdf = db.open(radars=RADAR, filters={"var": "DBZH", "logic": ">", "threshold": 20})
 
     assert rdf.data["DBZH"].min() > 20
@@ -563,7 +592,7 @@ def test_open_spans_several_radars(archive_dir_two_radars):
     """No ``radars=`` means every radar in the archive."""
     rdf = RadDB(archive_dir=str(archive_dir_two_radars)).open()
 
-    assert sorted(rdf.radars()) == ["A", "D"]
+    assert sorted(rdf.radars()) == sorted([RADAR, RADAR_B])
 
 
 # ---------------------------------------------------------------------------
@@ -588,7 +617,7 @@ def test_filter_ands_a_list_of_dicts(rdb):
     assert ((values > 10) & (values < 20)).all()
 
 
-def test_filter_rejects_a_misspelt_key(rdb):
+def test_filter_rejects_a_misspelled_key(rdb):
     """``value`` is not a filter key; ``threshold`` would default to 0 and keep every row."""
     with pytest.raises(KeyError, match="unknown filter key"):
         rdb.filter({"var": "DBZH", "logic": ">", "value": 10})
@@ -693,13 +722,13 @@ def test_sel_on_radars(archive_dir_two_radars):
     """``radars=`` narrows a multi-radar frame."""
     both = RadDB(archive_dir=str(archive_dir_two_radars)).open()
 
-    only_a = both.sel(radars=["A"])
+    only_a = both.sel(radars=[RADAR])
 
-    assert only_a.radars() == ["A"]
+    assert only_a.radars() == [RADAR]
     assert 0 < len(only_a) < len(both)
 
 
-def test_sel_keeps_the_lut_synchronised(rdb):
+def test_sel_keeps_the_lut_synchronized(rdb):
     """The geometry must shrink with the data, gate for gate."""
     out = rdb.sel(range=slice(2_000, 10_000), DBZH=slice(10, None))
 
@@ -764,7 +793,7 @@ def test_to_pandas_with_geometry_joins_the_lut(rdb):
     """Cartesian position and sweep come from the LUT on request."""
     with_geometry = rdb.to_pandas(with_geometry=True)
 
-    assert {"latitude", "longitude", "altitude", "sweep", "x_2056", "y_2056"} <= set(with_geometry.columns)
+    assert {"latitude", "longitude", "altitude", "sweep", "x_3067", "y_3067"} <= set(with_geometry.columns)
     assert len(with_geometry) == len(rdb)
 
 
@@ -852,9 +881,9 @@ def test_to_geoarrow_wedges_surround_their_own_centroid(rdb, db):
         on="gate_id",
         how="left",
     )
-    centres = shapely.centroid(polygons)
-    dx = (shapely.get_x(centres) - reference["longitude"].to_numpy()) * 111_320 * np.cos(np.radians(46.0))
-    dy = (shapely.get_y(centres) - reference["latitude"].to_numpy()) * 111_320
+    centers = shapely.centroid(polygons)
+    dx = (shapely.get_x(centers) - reference["longitude"].to_numpy()) * 111_320 * np.cos(np.radians(FI_SITE[1]))
+    dy = (shapely.get_y(centers) - reference["latitude"].to_numpy()) * 111_320
 
     assert np.hypot(dx, dy).max() < 20_000 / 24  # one gate length
 
@@ -891,7 +920,7 @@ def test_to_datatree_needs_the_radar_named_when_several_are_held(archive_dir_two
     """One tree describes one radar."""
     both = RadDB(archive_dir=str(archive_dir_two_radars)).open()
 
-    assert both.to_datatree(radar="A") is not None
+    assert both.to_datatree(radar=RADAR) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -935,27 +964,27 @@ def test_RadDB_end_time(two_volume_rdb):
 
 
 def test_RadDB_extent(rdb):
-    """``[xmin, xmax, ymin, ymax]`` in the archive's projected metres."""
+    """``[xmin, xmax, ymin, ymax]`` in the archive's projected meters."""
     extent = rdb.extent()
 
     assert len(extent) == 4
     assert extent[0] < extent[1]
     assert extent[2] < extent[3]
-    assert 2.4e6 < extent[0] < 2.9e6
+    assert 4.7e5 < extent[0] < 5.0e5
 
 
 def test_RadDB_geographic_extent(rdb):
     """The same box in degrees, around the synthetic site."""
     extent = rdb.geographic_extent()
 
-    assert extent[0] < CH_SITE[0] < extent[1]
-    assert extent[2] < CH_SITE[1] < extent[3]
+    assert extent[0] < FI_SITE[0] < extent[1]
+    assert extent[2] < FI_SITE[1] < extent[3]
 
 
 def test_RadDB_crs(rdb, archive_dir):
     """Declared or resolved from the archive — either way it answers."""
-    assert rdb.crs().to_epsg() == SWISS_EPSG
-    assert RadDB(archive_dir=str(archive_dir)).open(radars=RADAR).crs().to_epsg() == SWISS_EPSG
+    assert rdb.crs().to_epsg() == FMI_EPSG
+    assert RadDB(archive_dir=str(archive_dir)).open(radars=RADAR).crs().to_epsg() == FMI_EPSG
 
 
 def test_RadDB_geographic_crs(rdb):
@@ -969,7 +998,7 @@ def test_RadDB_geographic_crs(rdb):
 
 
 def test_RadDB_crop_by_bbox(rdb, db):
-    """A bounding box in the archive's own metres selects a strict subset."""
+    """A bounding box in the archive's own meters selects a strict subset."""
     cx, cy = _site_xy(db)
 
     crop = rdb.crop_by_bbox(bounds=(cx - 5000, cy - 5000, cx + 5000, cy + 5000))
@@ -996,32 +1025,32 @@ def test_a_crop_matching_nothing_still_converts(rdb):
     assert far.to_pandas(with_geometry=True).empty
 
 
-def test_RadDB_crop_by_polygone(rdb, db):
+def test_RadDB_crop_by_polygon(rdb, db):
     """An arbitrary shapely polygon, in the archive's frame."""
     cx, cy = _site_xy(db)
 
-    crop = rdb.crop_by_polygone(shapely.Point(cx, cy).buffer(5_000))
+    crop = rdb.crop_by_polygon(shapely.Point(cx, cy).buffer(5_000))
 
     assert 0 < len(crop) < len(rdb)
     assert crop.columns() == rdb.columns()
 
 
-def test_crop_by_polygone_reads_a_geojson_in_its_own_crs(rdb, tmp_path):
-    """A GeoJSON is lon/lat; reading those degrees as metres lands 2600 km away."""
+def test_crop_by_polygon_reads_a_geojson_in_its_own_crs(rdb, tmp_path):
+    """A GeoJSON is lon/lat; reading those degrees as meters lands thousands of km away."""
     import json
 
     square = {
         "type": "Polygon",
-        "coordinates": [[[6.9, 45.9], [7.1, 45.9], [7.1, 46.1], [6.9, 46.1], [6.9, 45.9]]],
+        "coordinates": [[[26.9, 61.9], [27.1, 61.9], [27.1, 62.1], [26.9, 62.1], [26.9, 61.9]]],
     }
     path = tmp_path / "aoi.geojson"
     path.write_text(json.dumps(square))
 
-    assert len(rdb.crop_by_polygone(str(path))) > 0
+    assert len(rdb.crop_by_polygon(str(path))) > 0
 
 
 def test_RadDB_crop_around_point(rdb, db):
-    """A radius in true metres around a point."""
+    """A radius in true meters around a point."""
     crop = rdb.crop_around_point(_site_xy(db), distance=5_000)
 
     assert 0 < len(crop) < len(rdb)
@@ -1030,7 +1059,7 @@ def test_RadDB_crop_around_point(rdb, db):
 
 def test_crop_around_point_accepts_lonlat(rdb):
     """``crs=4326`` says the point is in degrees."""
-    assert len(rdb.crop_around_point(CH_SITE, distance=5_000, crs=4326)) > 0
+    assert len(rdb.crop_around_point(FI_SITE, distance=5_000, crs=4326)) > 0
 
 
 def test_an_aoi_crs_override_is_validated(us_archive_dir):
@@ -1038,17 +1067,17 @@ def test_an_aoi_crs_override_is_validated(us_archive_dir):
     rdf = RadDB(archive_dir=str(us_archive_dir)).open(radars=RADAR)
 
     with pytest.raises(ValueError, match="distorts distance"):
-        rdf.crop_around_point(US_SITE, distance=10_000, crs=4326, aoi_crs=SWISS_EPSG)
+        rdf.crop_around_point(US_SITE, distance=10_000, crs=4326, aoi_crs=FMI_EPSG)
 
 
 def test_a_valid_aoi_crs_override_selects_gates(rdb):
     """A frame the LUT does not store is projected on the fly from latitude/longitude."""
-    crop = rdb.crop_around_point(CH_SITE, distance=10_000, crs=4326, aoi_crs=32632)
+    crop = rdb.crop_around_point(FI_SITE, distance=10_000, crs=4326, aoi_crs=32635)
 
     assert len(crop) > 0
 
 
-def test_a_crop_radius_is_true_metres_outside_switzerland(us_archive_dir):
+def test_a_crop_radius_is_true_meters_away_from_the_home_frame(us_archive_dir):
     """The 17% bug end to end: a "10 km" crop used to reach ~8.3 km at a US radar."""
     import pyproj
 
@@ -1069,7 +1098,7 @@ def test_a_crop_radius_is_true_metres_outside_switzerland(us_archive_dir):
 
 
 def test_a_quicklook_is_framed_on_the_archive(us_archive_dir):
-    """A Swiss-framed view used to push a US AOI off-screen entirely."""
+    """A view framed on the archive's home CRS used to push a US AOI off-screen entirely."""
     import matplotlib.pyplot as plt
 
     from raddb.aoi import _reproject_to_aoi
@@ -1124,7 +1153,7 @@ def test_a_cross_section_measures_true_ground_distance(us_archive_dir):
 
 
 def test_a_cross_section_quicklook_is_framed_on_the_archive(us_archive_dir):
-    """``quicklook=True`` used to frame a non-Swiss section over Switzerland."""
+    """``quicklook=True`` used to frame a US section over the archive's home country."""
     import matplotlib.pyplot as plt
 
     from raddb.aoi import _reproject_to_aoi
@@ -1240,7 +1269,7 @@ def test_a_volume_with_only_nat_times_is_skipped(tmp_path, make_datatree):
         ds["time"] = xr.full_like(ds["time"], np.datetime64("NaT"))
         dt[name].dataset = ds
 
-    result = RadDB(archive_dir=str(tmp_path), crs=SWISS_EPSG).archive(datatree=dt, radar=RADAR)
+    result = RadDB(archive_dir=str(tmp_path), crs=FMI_EPSG).archive(datatree=dt, radar=RADAR)
 
     assert (result["n_archived"], result["n_failed"], result["n_skipped"]) == (0, 0, 1)
     assert not list((tmp_path / RADAR).rglob("*_POL.parquet"))
@@ -1254,7 +1283,7 @@ def test_a_skipped_volume_does_not_poison_the_archive(tmp_path, make_datatree):
         ds["DBZH"] = ds["DBZH"].where(False)
         empty[name].dataset = ds
 
-    db = RadDB(archive_dir=str(tmp_path), crs=SWISS_EPSG)
+    db = RadDB(archive_dir=str(tmp_path), crs=FMI_EPSG)
     db.archive(datatree=make_datatree(vol_time=VOL_TIMES[0]), radar=RADAR)
     db.archive(datatree=empty, radar=RADAR)
 
@@ -1277,10 +1306,10 @@ def test_the_disk_path_checkpoints_a_skip(tmp_path, make_datatree):
     empty.to_netcdf(src / f"{RADAR}_20240802_063000.nc")
     arch = tmp_path / "arch"
 
-    first = RadDB(archive_dir=str(arch), crs=SWISS_EPSG).archive(datatree_dir=str(src), radar=RADAR)
+    first = RadDB(archive_dir=str(arch), crs=FMI_EPSG).archive(datatree_dir=str(src), radar=RADAR)
     assert (first["n_archived"], first["n_failed"], first["n_skipped"]) == (1, 0, 1)
 
-    again = RadDB(archive_dir=str(arch), crs=SWISS_EPSG).archive(datatree_dir=str(src), radar=RADAR)
+    again = RadDB(archive_dir=str(arch), crs=FMI_EPSG).archive(datatree_dir=str(src), radar=RADAR)
     assert (again["n_archived"], again["n_failed"], again["n_skipped"]) == (0, 0, 0)
 
 
@@ -1292,9 +1321,9 @@ def test_the_multi_radar_path_counts_a_skip_separately(tmp_path, make_datatree):
         ds["DBZH"] = ds["DBZH"].where(False)
         empty[name].dataset = ds
 
-    result = RadDB(archive_dir=str(tmp_path), crs=SWISS_EPSG).archive(
-        datatree={RADAR: [make_datatree(vol_time=VOL_TIMES[0]), empty], "D": [make_datatree()]},
+    result = RadDB(archive_dir=str(tmp_path), crs=FMI_EPSG).archive(
+        datatree={RADAR: [make_datatree(vol_time=VOL_TIMES[0]), empty], RADAR_B: [make_datatree()]},
     )
 
     assert (result["n_archived"], result["n_failed"], result["n_skipped"]) == (2, 0, 1)
-    assert sorted(result["radars"]) == ["A", "D"]
+    assert sorted(result["radars"]) == sorted([RADAR, RADAR_B])

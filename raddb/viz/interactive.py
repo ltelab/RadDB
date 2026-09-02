@@ -3,14 +3,14 @@
 Draw a shape on the map and it is dispatched to the matching RadDB method:
 
     rectangle  ->  crop_by_bbox
-    polygon    ->  crop_by_polygone
+    polygon    ->  crop_by_polygon
     marker     ->  crop_around_point       (distance from the widget)
     polyline   ->  extract_cross_section   (first & last vertex)
 
 The map is WGS-84 (lon/lat), so the drawn coordinates are passed with ``crs=4326``
 (reprojected to LV95 internally).  Each call returns a new data-carrying
 ``RadDB``.  The drawn AOI can be saved as GeoJSON and reloaded later via
-``crop_by_polygone("aoi.geojson")``.
+``crop_by_polygon("aoi.geojson")``.
 
 This is an **optional** UI layer — it needs ``ipyleaflet`` + ``ipywidgets`` and a
 Jupyter frontend.  The hand-typed / shapefile crop methods are unaffected.
@@ -48,7 +48,7 @@ def _crop_from_feature(db, feature, distance_m: float = 15_000.0):
     feature : dict
         A GeoJSON Feature or bare geometry (from ipyleaflet's draw control).
     distance_m : float
-        Distance (metres) used when the drawn shape is a marker (Point).
+        Distance (meters) used when the drawn shape is a marker (Point).
 
     Returns
     -------
@@ -76,7 +76,7 @@ def _crop_from_feature(db, feature, distance_m: float = 15_000.0):
             lats = [p[1] for p in ring]
             bounds = (min(lons), min(lats), max(lons), max(lats))
             return "bbox", db.crop_by_bbox(bounds=bounds, crs=4326)
-        return "polygon", db.crop_by_polygone(shapely.geometry.shape(geom), crs=4326)
+        return "polygon", db.crop_by_polygon(shapely.geometry.shape(geom), crs=4326)
 
     raise ValueError(f"unsupported drawn geometry type: {gtype!r}")
 
@@ -110,10 +110,10 @@ class AOISelector:
     radars : list of str, optional
         Radars to mark on the map.  Default: the radars in ``db``.
     center : (lat, lon), optional
-        Initial map centre.  Default: mean of the radar sites, else Switzerland.
+        Initial map center.  Default: mean of the radar sites, else Switzerland.
     zoom : int
     point_radius_m : float
-        Default distance (metres) for the marker (point) crop.
+        Default distance (meters) for the marker (point) crop.
     """
 
     def __init__(self, db, radars=None, center=None, zoom=8, point_radius_m=15_000.0):
@@ -177,7 +177,7 @@ class AOISelector:
 
         instructions = W.HTML(
             "<b>Draw an AOI</b> with the toolbar (top-left): "
-            "▭ rectangle → <code>crop_by_bbox</code>, ⬠ polygon → <code>crop_by_polygone</code>, "
+            "▭ rectangle → <code>crop_by_bbox</code>, ⬠ polygon → <code>crop_by_polygon</code>, "
             "📍 marker → <code>crop_around_point</code> (uses the radius box below), "
             "/ line → <code>extract_cross_section</code>. Then <b>Apply crop</b>.",
         )
@@ -244,7 +244,7 @@ class AOISelector:
                 return
             path = Path(self.save_path.value)
             path.write_text(json.dumps(_feature_collection(self.feature), indent=1))
-            print(f"saved AOI -> {path}  (reload with db.crop_by_polygone('{path}') for polygons)")
+            print(f"saved AOI -> {path}  (reload with db.crop_by_polygon('{path}') for polygons)")
 
     def display(self):
         """Render the widget in the notebook and return ``self``."""

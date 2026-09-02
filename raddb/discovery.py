@@ -7,58 +7,19 @@
 - **Archived POL search** (output side): locate ``*_POL.parquet`` files in a
   time range inside an existing RadDB archive.
 
-Everything here is pure filesystem + pandas — no pyart / radar_api
-dependency — so discovery works in any environment.  (Raw METRANET
-scanning lives in the private ``raddb.mch.discovery`` module.)
+Everything here is pure filesystem + pandas — no pyart dependency — so
+discovery works in any environment.  Scanning a national archive's own raw
+format belongs in the package that reads it, not here.
 """
 
 from __future__ import annotations
 
-import datetime
 import re
-from collections import defaultdict
 from pathlib import Path
 
 import pandas as pd
 
 from raddb.helper import ensure_utc
-
-# ============================================================================
-# METRANET filename helpers  (shared with raddb.mch)
-# ============================================================================
-
-
-def _parse_volume_time(stem: str) -> datetime.datetime:
-    """Parse the timestamp from a METRANET filename stem.
-
-    Works for any ``XXXYYJJJHHMM...`` stem (3-char prefix + 2-digit year +
-    day-of-year + hour + minute), e.g. ``MLA2419423300U`` or
-    ``HZT2124010000L``.  Returns 1970-01-01 when the stem cannot be parsed.
-    """
-    try:
-        y, j, h, m = (
-            int(stem[3:5]),
-            int(stem[5:8]),
-            int(stem[8:10]),
-            int(stem[10:12]),
-        )
-        return datetime.datetime(2000 + y, 1, 1) + datetime.timedelta(
-            days=j - 1,
-            hours=h,
-            minutes=m,
-        )
-    except Exception:
-        return datetime.datetime(1970, 1, 1)
-
-
-def _group_files_by_volume(paths: list[str]) -> dict:
-    """Group sweep files by volume (based on filename stem)."""
-    vols = defaultdict(list)
-    for p in paths:
-        stem = Path(p).stem
-        vols[stem].append(p)
-    return dict(vols)
-
 
 # ============================================================================
 # DataTree file discovery  (input side)

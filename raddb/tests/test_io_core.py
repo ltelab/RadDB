@@ -6,13 +6,18 @@ what is asserted here.
 **Volumes must join their LUT.** The LUT stores a radar's *scan strategy*, not one
 volume's measured azimuths, and every incoming ray is snapped onto that nominal grid
 before its ``gate_id`` is built.  Without it a drifting antenna silently lost 6% of gates
-per volume on Rad4Alp and 35% on WSR-88D — invisible except in LUT joins.
+per volume on a 360-ray C-band network and 35% on WSR-88D — invisible except in LUT joins.
 
 **A scan-strategy change is refused, not reconciled.** More rays than the grid, or a
 missing sweep, raises; *fewer* rays is a rotation with holes and is accepted.
 
 **Empty is not an error.** A clear-air volume archives zero gates and is *skipped*; it
 used to crash the batch on ``pd.NaT.month``.
+
+**A moment is a per-gate variable.** There is no list of known moment names: whatever a
+volume measures on both the azimuth and the range dimension is archived, and the per-ray
+or scalar metadata beside it (``sweep_mode``, ``prt_mode``, ...) never is.  A hardcoded
+allowlist used to archive 5 of an FMI volume's 19 moments and silently drop the rest.
 """
 
 from __future__ import annotations
@@ -27,8 +32,8 @@ import xarray as xr
 
 from raddb.io_core import (
     _build_polar_dataframe,
-    _cast_hc_column,
     _col,
+    _gate_variables,
     _save_polar_parquet,
     _snap_volume_azimuths,
     _to_pandas_frame,
@@ -53,7 +58,7 @@ from raddb.io_core import (
 )
 from raddb.lut import generate_lut_from_datatree, lut_file_path
 from raddb.main import RadDB
-from raddb.tests.conftest import MCH_BIAS, RADAR, SWISS_EPSG, build_datatree, retime
+from raddb.tests.conftest import ANTENNA_BIAS, FMI_EPSG, RADAR, RADAR_B, build_datatree, retime
 
 # A window wide enough to hold every synthetic volume in this module.
 TIME_WINDOW = ("2024-08-01 00:00", "2024-08-02 00:00")
@@ -62,7 +67,7 @@ TIME_WINDOW = ("2024-08-01 00:00", "2024-08-02 00:00")
 @pytest.fixture
 def lut_base(tmp_path, make_datatree):
     """A base path with only radar ``A``'s LUT written — no volumes yet."""
-    generate_lut_from_datatree(make_datatree(), radar=RADAR, output_base_path=str(tmp_path), projection_epsg=SWISS_EPSG)
+    generate_lut_from_datatree(make_datatree(), radar=RADAR, output_base_path=str(tmp_path), projection_epsg=FMI_EPSG)
     return str(tmp_path)
 
 
@@ -150,7 +155,7 @@ def test_datatree_to_dataframe_keeps_true_range_values(datatree, make_datatree):
 
     ``to_dataframe`` then indexes that dimension by position and emits the true values
     as a same-named column, which ``reset_index`` refuses to insert.  The flattener
-    rebuilds the index first, so metres survive rather than the positions 0..n-1.
+    rebuilds the index first, so meters survive rather than the positions 0..n-1.
     """
     expected = datatree_to_dataframe(datatree)
     got = datatree_to_dataframe(_drop_range_index(make_datatree()))
@@ -227,21 +232,21 @@ def test_archive_multiple_volumes_accepts_a_plain_list(lut_base, make_datatree):
 
 def test_archive_volumes_multi_radar(tmp_path, make_datatree):
     """The ``{radar: [volumes]}`` form keeps each radar's records separate."""
-    for radar in ("A", "D"):
+    for radar in (RADAR, RADAR_B):
         generate_lut_from_datatree(
             make_datatree(),
             radar=radar,
             output_base_path=str(tmp_path),
-            projection_epsg=SWISS_EPSG,
+            projection_epsg=FMI_EPSG,
         )
 
     results = archive_volumes_multi_radar(
-        {"A": [make_datatree()], "D": [make_datatree()]},
+        {RADAR: [make_datatree()], RADAR_B: [make_datatree()]},
         base_output_path=str(tmp_path),
         verbose=False,
     )
 
-    assert sorted(results) == ["A", "D"]
+    assert sorted(results) == sorted([RADAR, RADAR_B])
     assert all(len(v) == 1 for v in results.values())
 
 
@@ -273,6 +278,78 @@ def test_save_polar_parquet_returns_none_on_an_empty_frame():
 
 
 # ---------------------------------------------------------------------------
+# Which columns are archived — the per-gate rule
+# ---------------------------------------------------------------------------
+
+
+def test_gate_variables(make_datatree):
+    """Per-gate moments in, scan metadata out."""
+    assert _gate_variables(make_datatree()) == ["DBZH", "ZDR", "RHOHV", "PHIDP", "VRADH"]
+
+
+def test_scan_metadata_never_reaches_the_parquet(lut_base, make_datatree):
+    """``sweep_mode`` is a scalar string describing the scan, not a measurement.
+
+    It broadcasts to one value per row when the volume is flattened, so an
+    exclusion rule based on column names alone would have to know it by name.  The
+    dimension rule drops it because it is not carried on azimuth x range — which also
+    keeps a string out of a numeric parquet column.
+    """
+    path = datatree_to_parquet(make_datatree(), radar=RADAR, base_output_path=lut_base)
+
+    assert "sweep_mode" not in pl.read_parquet(path).columns
+
+
+def test_a_moment_raddb_never_heard_of_is_archived(lut_base, make_datatree):
+    """The point of dropping the allowlist: a network records what it likes.
+
+    ``SPAM`` is in no list anywhere in the package, and it must still survive.
+    """
+    dt = make_datatree()
+    for name in dt.children:
+        node = dt[name].to_dataset()
+        dt[name] = node.assign(SPAM=(("azimuth", "range"), np.full(node["DBZH"].shape, 7.0, np.float32)))
+
+    path = datatree_to_parquet(dt, radar=RADAR, base_output_path=lut_base)
+    out = pl.read_parquet(path)
+
+    assert "SPAM" in out.columns
+    assert out["SPAM"].drop_nulls().unique().to_list() == [7.0]
+
+
+def test_variables_narrows_what_is_archived(lut_base, make_datatree):
+    """``variables=`` is the knob for a lean archive; ``gate_id``/``time`` always stay."""
+    path = datatree_to_parquet(
+        make_datatree(),
+        radar=RADAR,
+        base_output_path=lut_base,
+        variables=["DBZH", "ZDR"],
+    )
+
+    assert pl.read_parquet(path).columns == ["gate_id", "time", "DBZH", "ZDR"]
+
+
+def test_archive_volume_honors_variables(lut_base, make_datatree):
+    """The same knob on the batch entry point, not only the single-volume one."""
+    path = archive_volume(make_datatree(), radar=RADAR, base_output_path=lut_base, variables=["DBZH"])
+
+    assert pl.read_parquet(path).columns == ["gate_id", "time", "DBZH"]
+
+
+def test_float_columns_are_narrowed_to_float32(lut_base, make_datatree):
+    """Decided by dtype, not by a list of names, so an unknown moment is narrowed too."""
+    dt = make_datatree()
+    for name in dt.children:
+        node = dt[name].to_dataset()
+        dt[name] = node.assign(SPAM=(("azimuth", "range"), np.full(node["DBZH"].shape, 7.0, np.float64)))
+
+    out = pl.read_parquet(datatree_to_parquet(dt, radar=RADAR, base_output_path=lut_base))
+
+    assert out["SPAM"].dtype == pl.Float32
+    assert out["gate_id"].dtype == pl.Int64, "the join key must stay int64"
+
+
+# ---------------------------------------------------------------------------
 # The nominal azimuth grid — why a volume joins its LUT
 # ---------------------------------------------------------------------------
 
@@ -281,13 +358,13 @@ def test_save_polar_parquet_returns_none_on_an_empty_frame():
 def drifting_archive(tmp_path):
     """One LUT-defining volume plus four later ones with drifting azimuths."""
     base = tmp_path / "drift"
-    db = RadDB(archive_dir=str(base), crs=SWISS_EPSG)
+    db = RadDB(archive_dir=str(base), crs=FMI_EPSG)
     first = build_datatree(n_az=360, n_rng=40, n_sweeps=3)
     db.archive(datatree=first, radar=RADAR)
     rng = np.random.default_rng(7)
     for k in range(1, 5):
         when = pd.Timestamp("2024-08-01 12:00:00") + pd.Timedelta(minutes=5 * k)
-        db.archive(datatree=retime(first, when, rng, MCH_BIAS), radar=RADAR)
+        db.archive(datatree=retime(first, when, rng, ANTENNA_BIAS), radar=RADAR)
     return base
 
 
@@ -372,7 +449,7 @@ def test_snap_volume_azimuths_refuses_a_ray_beyond_the_tolerance():
 
 def test_archiving_refuses_a_different_ray_count(tmp_path, make_datatree):
     """Supporting several geometries per radar is deliberately not done yet."""
-    db = RadDB(archive_dir=str(tmp_path / "a"), crs=SWISS_EPSG)
+    db = RadDB(archive_dir=str(tmp_path / "a"), crs=FMI_EPSG)
     db.archive(datatree=build_datatree(n_az=360, n_rng=20, n_sweeps=2), radar=RADAR)
 
     with pytest.raises(ValueError, match="different scan strategy"):
@@ -384,11 +461,11 @@ def test_archiving_refuses_a_different_ray_count(tmp_path, make_datatree):
 
 def test_archiving_accepts_a_volume_that_dropped_rays(tmp_path):
     """A volume short of a ray or two is a rotation with holes, not a new strategy."""
-    db = RadDB(archive_dir=str(tmp_path / "a"), crs=SWISS_EPSG)
+    db = RadDB(archive_dir=str(tmp_path / "a"), crs=FMI_EPSG)
     complete = build_datatree(n_az=360, n_rng=20, n_sweeps=2)
     db.archive(datatree=complete, radar=RADAR)
 
-    drifted = retime(complete, pd.Timestamp("2024-08-01 18:00"), np.random.default_rng(21), MCH_BIAS)
+    drifted = retime(complete, pd.Timestamp("2024-08-01 18:00"), np.random.default_rng(21), ANTENNA_BIAS)
     holed = xr.DataTree.from_dict(
         {
             name: node.to_dataset().isel(azimuth=np.delete(np.arange(360), [5, 6, 200]))
@@ -410,14 +487,14 @@ def test_a_lut_built_from_a_holed_volume_still_holds_every_ray(tmp_path):
             for name, node in complete.children.items()
         },
     )
-    db = RadDB(archive_dir=str(tmp_path / "a"), crs=SWISS_EPSG)
+    db = RadDB(archive_dir=str(tmp_path / "a"), crs=FMI_EPSG)
     db.archive(datatree=holed, radar=RADAR)
 
     lut = db.get_lut(RADAR)
     assert lut.filter(pl.col("sweep") == 1)["azimuth"].n_unique() == 360
 
     result = db.archive(
-        datatree=retime(complete, pd.Timestamp("2024-08-01 19:00"), np.random.default_rng(22), MCH_BIAS),
+        datatree=retime(complete, pd.Timestamp("2024-08-01 19:00"), np.random.default_rng(22), ANTENNA_BIAS),
         radar=RADAR,
     )
     assert (result["n_archived"], result["n_failed"]) == (1, 0)
@@ -428,14 +505,14 @@ def test_a_lut_built_from_a_holed_volume_still_holds_every_ray(tmp_path):
 
 def test_a_batch_reports_a_refusal_instead_of_aborting(tmp_path):
     """One incompatible volume must not take the whole batch down."""
-    db = RadDB(archive_dir=str(tmp_path / "a"), crs=SWISS_EPSG)
+    db = RadDB(archive_dir=str(tmp_path / "a"), crs=FMI_EPSG)
     db.archive(datatree=build_datatree(n_az=360, n_rng=20, n_sweeps=2), radar=RADAR)
 
     good = retime(
         build_datatree(n_az=360, n_rng=20, n_sweeps=2),
         pd.Timestamp("2024-08-01 16:00"),
         np.random.default_rng(12),
-        MCH_BIAS,
+        ANTENNA_BIAS,
     )
     bad = build_datatree(n_az=720, n_rng=20, n_sweeps=2, vol_time=pd.Timestamp("2024-08-01 17:00"))
 
@@ -492,7 +569,7 @@ def test_parquet_to_dataframe_selects_columns(archive_dir):
     assert set(df.columns) <= {"gate_id", "DBZH", "volume_time", "radar"}
 
 
-def test_parquet_to_dataframe_honours_the_time_window(archive_dir_two_volumes):
+def test_parquet_to_dataframe_honors_the_time_window(archive_dir_two_volumes):
     """Only volumes inside the window are read."""
     both = parquet_to_dataframe(RADAR, archive_dir_two_volumes, *TIME_WINDOW)
     first = parquet_to_dataframe(RADAR, archive_dir_two_volumes, "2024-08-01 11:59", "2024-08-01 12:01")
@@ -501,7 +578,7 @@ def test_parquet_to_dataframe_honours_the_time_window(archive_dir_two_volumes):
 
 
 def test_scan_polar_parquet(archive_dir):
-    """The lazy entry point, for queries that should not materialise the archive."""
+    """The lazy entry point, for queries that should not materialize the archive."""
     lazy = scan_polar_parquet(RADAR, archive_dir, *TIME_WINDOW)
 
     assert isinstance(lazy, pl.LazyFrame)
@@ -511,6 +588,27 @@ def test_scan_polar_parquet(archive_dir):
 def test_scan_polar_parquet_returns_none_when_nothing_matches(archive_dir):
     """No files in range is ``None``, which callers check before collecting."""
     assert scan_polar_parquet(RADAR, archive_dir, "1999-01-01", "1999-12-31") is None
+
+
+def test_two_volumes_join_whatever_order_their_moments_are_in(archive_dir_two_volumes):
+    """``_gate_variables`` keeps a volume's own column order, so files disagree.
+
+    The same radar read from two sources — a converted zarr and a raw ODIM, say —
+    archives the same moments in a different order, and a plain vertical concat
+    rejects that outright with ``schema names differ``.  A volume may also carry a
+    moment another one does not: that column reads back null-filled, not as an error.
+    """
+    files = sorted(archive_dir_two_volumes.rglob("*POL.parquet"))
+    assert len(files) == 2
+
+    df = pl.read_parquet(files[1])
+    reordered = df.select([*reversed(df.columns)]).with_columns(pl.lit(1.0).alias("EXTRA"))
+    reordered.write_parquet(files[1])
+
+    out = scan_polar_parquet(RADAR, archive_dir_two_volumes, *TIME_WINDOW).collect()
+
+    assert out.height == pl.read_parquet(files[0]).height + df.height
+    assert out["EXTRA"].null_count() == pl.read_parquet(files[0]).height
 
 
 # ---------------------------------------------------------------------------
@@ -612,7 +710,7 @@ def test_labels_to_dataframe_carries_extra_columns():
 def test_join_labels_with_lut(archive_dir):
     """Labels gain the static geometry their ``gate_id`` points at.
 
-    The join is LUT-left, so every gate keeps a row and unlabelled ones carry a null —
+    The join is LUT-left, so every gate keeps a row and unlabeled ones carry a null —
     which is what lets a partial model output be reconstructed onto the full grid.
     """
     lut_path = lut_file_path(RADAR, "lut", archive_dir)
@@ -680,18 +778,6 @@ def test_col_reads_from_either_kind():
         out = _col(df, "a", np.float64)
         assert out.dtype == np.float64
         assert out.tolist() == [1.0, 2.0]
-
-
-def test_cast_hc_column_shifts_to_the_parquet_scale():
-    """HC is stored 1-based; the raw 0-based class needs ``shift=1``."""
-    np.testing.assert_array_equal(_cast_hc_column(np.array([0.0, 3.0, 8.0]), shift=1), np.array([1, 4, 9]))
-
-
-def test_cast_hc_column_survives_nan():
-    """A NaN class must not become a nonsense integer."""
-    out = _cast_hc_column(np.array([np.nan, 2.0]), shift=1)
-
-    assert out[1] == 3
 
 
 def test_a_malformed_volume_is_reported_as_a_failure(lut_base):

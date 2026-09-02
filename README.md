@@ -16,10 +16,10 @@
 | Citation          | [![DOI](XXX)](XXX)          |                                                                                                                                                                                                                                                                                                                                                                                                                                                               [**Documentation**](https://raddb.readthedocs.io/en/latest/)
 
 RadDB archives xarray **DataTree** radar volumes as compact Parquet files and
-gives you a small, fluent interface to load, filter, crop, extract cross-section and
+gives you a small, fluent interface to load, filter, crop, extract cross-sections and
 plot them.  It is **network-agnostic**: any DataTree with the standard
 [xradar](https://docs.openradarscience.org/projects/xradar/) coordinate layout
-(NEXRAD, ODIM, IRIS, …) can be archived and analysed.
+(ODIM, IRIS, …) can be archived and analyzed.
 
 ## Storage model
 
@@ -56,7 +56,7 @@ Core runtime dependencies: `numpy, pandas, polars, geopandas, shapely, pyproj, x
 ```python
 import raddb
 
-db = raddb.RadDB(archive_dir="/data/raddb", crs=32614)
+db = raddb.RadDB(archive_dir="/data/raddb", crs=3067)
 ```
 
 A **projected CRS is mandatory to write** an archive and never needed to read one.
@@ -67,12 +67,12 @@ There is no default: the wrong projection is silently wrong.
 
 ```python
 # From saved DataTree files on disk (.zarr / .nc); the LUT is auto-generated:
-db.archive(datatree_dir="/data/NEXRAD_datatree")  # radar inferred per file
+db.archive(datatree_dir="/data/FMI_datatree")  # radar inferred per file
 
 # ...or archive in-memory DataTrees directly:
-db.archive(datatree=dt, radar="KTLX")
-db.archive(datatree=[dt1, dt2], radar="KTLX")
-db.archive(datatree={"KTLX": [dt1], "KMLB": [dt2]})  # multi-radar
+db.archive(datatree=dt, radar="FANJ")
+db.archive(datatree=[dt1, dt2], radar="FANJ")
+db.archive(datatree={"FANJ": [dt1], "FKOR": [dt2]})  # multi-radar
 ```
 
 Pass `filter=` to decide which gates ever reach the disk — the main control on
@@ -80,14 +80,14 @@ archive size:
 
 ```python
 db.archive(
-    datatree=dt, radar="KTLX", filter={"var": "DBZH", "logic": ">", "threshold": 20}
+    datatree=dt, radar="FANJ", filter={"var": "DBZH", "logic": ">", "threshold": 20}
 )
 ```
 
 ### Open
 
 ```python
-rdf = db.open(time_period=("2024-06-12", "2024-06-13"), radars="KTLX")
+rdf = db.open(time_period=("2024-06-17", "2024-06-18"), radars="FANJ")
 print(rdf)  # summary: gates, radars, time range, columns
 
 len(rdf), rdf.columns(), rdf.radars()
@@ -98,7 +98,7 @@ rdf.crs(), rdf.geographic_crs()
 ```
 
 `columns=` and `filters=` are pushed down into the scan, so only the rows you
-asked for are ever materialised.
+asked for are ever materialized.
 
 ### Filter and convert
 
@@ -117,22 +117,22 @@ dt = rdf.to_datatree()  # back to xarray
 ```
 
 Filters are `{"var", "logic", "threshold"}` dicts, where `logic` is one of
-`==`, `!=`, `>`, `>=`, `<`, `<=`.  `crs` is an EPSG int (e.g. `32614`), a
+`==`, `!=`, `>`, `>=`, `<`, `<=`.  `crs` is an EPSG int (e.g. `3067`), a
 CRS object, or `None`.
 
 ### Crop to an area of interest
 
 ```python
-box = rdf.crop_by_bbox(extent=[636_504, 676_504, 3_891_333, 3_931_333])
-poly = rdf.crop_by_polygone("catchment.geojson")
-disc = rdf.crop_around_point((656_504, 3_911_333), distance=20_000)  # metres
+box = rdf.crop_by_bbox(extent=[485_859, 525_859, 6_732_099, 6_772_099])
+poly = rdf.crop_by_polygon("catchment.geojson")
+disc = rdf.crop_around_point((505_859, 6_752_099), distance=20_000)  # meters
 # rdf.interactive_crop()   # draw an AOI on a Jupyter map
 ```
 
 ### Cut a cross-section
 
 ```python
-cs = rdf.extract_cross_section(p1=(626_504, 3_911_333), p2=(686_504, 3_911_333))
+cs = rdf.extract_cross_section(p1=(475_859, 6_752_099), p2=(535_859, 6_752_099))
 ```
 
 ### Plot
@@ -141,7 +141,7 @@ cs = rdf.extract_cross_section(p1=(626_504, 3_911_333), p2=(686_504, 3_911_333))
 rdf.plot_ppi(sweep=1, variable="DBZH", save="ppi.png")
 rdf.plot_rhi(azimuth=270, variable="DBZH")
 rdf.plot_cappi(altitude=3000, variable="DBZH")
-cs.plot_cross_section(variable="DBZH", save="xsec.png")
+cs.plot_vcs(variable="DBZH", save="xsec.png")
 ```
 
 Each plot draws into one `Axes` and returns the matplotlib artist, so you compose
@@ -160,16 +160,16 @@ rdf.filter({"var": "DBZH", "logic": ">", "threshold": 20}).crop_by_bbox(
 ```python
 db.inventory()  # radars, volume counts, time ranges, size
 db.inventory(detailed=True)  # + LUT info, stored variables, day-by-day counts
-db.inventory(datatree_dir="/data/NEXRAD_datatree")  # DataTree files not archived yet
+db.inventory(datatree_dir="/data/FMI_datatree")  # DataTree files not archived yet
 ```
 
 ### LUT accessors (archive-bound)
 
 ```python
 db.list_radars()  # radars present in the archive
-db.get_lut("KTLX")  # the static LUT (polars)
-db.get_radar_info("KTLX")  # site location / sweep geometry
-db.add_lut_projection("KTLX", epsg=32614)
+db.get_lut("FANJ")  # the static LUT (polars)
+db.get_radar_info("FANJ")  # site location / sweep geometry
+db.add_lut_projection("FANJ", epsg=3067)
 ```
 
 ## Module structure
@@ -182,14 +182,14 @@ raddb/
 ├── lut.py          # LUT generation / geo projection
 ├── aoi.py          # AOI / crop / cross-section geometry
 ├── discovery.py    # find_datatree_files + filename-time parsing
-├── helper.py       # filters, radar-name normalisation, timers
+├── helper.py       # filters, radar-name normalization, timers
 └── viz/            # plot.py (PPI/RHI/CAPPI/cross-section), interactive.py
 ```
 
 ## Notes
 
 - **Projected coordinates / `crs`.** Generating a LUT with a projection (e.g.
-  `crs=32614`) and the projected accessors (`extent`, `to_geopandas`) use `pyproj`,
+  `crs=3067`) and the projected accessors (`extent`, `to_geopandas`) use `pyproj`,
   which needs the PROJ database.  A `PROJ_DATA` / `PROJ_LIB` inherited from another
   environment (a conda base env, a system PROJ) points at a proj.db of the wrong
   PROJ version and makes every projection fail with *"no database context

@@ -19,7 +19,7 @@ No pyart / geocube dependency — only numpy, polars, pandas, shapely, pyproj.
 
 The centroid tables are **polars** frames (the package-wide default); the spatial
 predicate itself runs on plain numpy arrays via shapely, so no geometry objects
-are ever materialised for the ~1.7M gates of a full LUT.
+are ever materialized for the ~1.7M gates of a full LUT.
 """
 
 from __future__ import annotations
@@ -133,7 +133,7 @@ def _lut_centroids(base_path: str | Path, radars: list[str], epsg=None) -> pl.Da
     base_path : str or Path
         RadDB archive base directory.
     radars : list of str
-        Radar letters whose LUTs to load (e.g. ``["L", "P"]``).
+        Radar names whose LUTs to load (e.g. ``["L", "P"]``).
 
     Returns
     -------
@@ -201,8 +201,8 @@ def _load_one_centroid_table(base: Path, radar: str, epsg: int) -> pl.DataFrame:
 # than EPSG lookups) keeps reprojection working even where the PROJ database is
 # unavailable — the same tactic raddb.lut.add_lut_projection uses for WGS-84.
 # The LV95 string is the standard 7-parameter CH1903+ definition; it agrees with
-# the grid-based EPSG:2056 transform to well under a metre, negligible at the
-# kilometre scale of AOI gate selection.
+# the grid-based EPSG:2056 transform to well under a meter, negligible at the
+# kilometer scale of AOI gate selection.
 _PROJ4 = {
     4326: "+proj=longlat +datum=WGS84 +no_defs",
     2056: (
@@ -250,7 +250,7 @@ def _reproject_to_aoi(geom, crs: int | str | None, aoi_epsg: int):
     """
     if crs is None:
         return geom
-    # Normalise common spellings of "already the AOI CRS" → no pyproj needed.
+    # Normalize common spellings of "already the AOI CRS" → no pyproj needed.
     if crs in (aoi_epsg, str(aoi_epsg), f"EPSG:{aoi_epsg}", f"epsg:{aoi_epsg}"):
         return geom
 
@@ -500,7 +500,7 @@ def _read_geometry_file(path: Path):
 
     ``.shp`` via pyshp, ``.geojson`` via json.  Polygons define an AOI to crop
     with; lines define a vertical cross-section.  The returned CRS is what the
-    file declares — callers must honour it rather than assuming LV95.
+    file declares — callers must honor it rather than assuming LV95.
     """
     if not path.exists():
         raise FileNotFoundError(f"Geometry file not found: {path}")
@@ -541,7 +541,7 @@ def _read_geojson(path: Path):
         geoms = [shape(data)]
     else:
         raise ValueError(
-            f"Unrecognised GeoJSON object type {kind!r}; expected a "
+            f"Unrecognized GeoJSON object type {kind!r}; expected a "
             "FeatureCollection, a Feature, or a bare geometry.",
         )
     if not geoms:
@@ -608,7 +608,7 @@ def _prj_crs(prj_path: Path):
 #     (distance-along-line, altitude) plane
 #     <- radDB_spatial_plot.get_rad_gdb_vert_cross_section
 # Adapted to the current data model (projected x/y + altitude from the LUT) and
-# fully vectorised (numpy point-to-segment prefilter replaces the KDTree).
+# fully vectorized (numpy point-to-segment prefilter replaces the KDTree).
 # ============================================================================
 
 _CS_LUT_BASE_COLS = [
@@ -633,7 +633,7 @@ def _lut_cs_table(
 
     Half-dimensions (prototype convention):
       - ``dR``: half the radial gate spacing, derived per sweep from the LUT's
-        range grid (500 m -> 250 m for MCH radars);
+        range grid (e.g. 500 m -> 250 m at 500 m range sampling);
       - ``dA`` (= dE): half the across-beam extent, ``range * tan(beamwidth/2)``
         — grows with range.
     """
@@ -651,7 +651,7 @@ def _lut_cs_table(
         if t is None:
             available = set(pq.read_schema(lut_path).names)
             xc, yc = f"x_{int(epsg)}", f"y_{int(epsg)}"
-            # The LUT stores two different x/y: metres from the radar, and the
+            # The LUT stores two different x/y: meters from the radar, and the
             # projected pair.  The section geometry works in the projected one,
             # which is why it takes the plain `x`/`y` names here; the
             # radar-relative pair rides along as x_rel/y_rel and is renamed back
@@ -802,7 +802,7 @@ def _beam_profile(base_path, sub: pd.DataFrame, epsg: int):
     """Per-gate beam profile from the ``v_plane`` lattice, or ``None``.
 
     Returns ``(d_near, d_far, z_near, z_far, half_thickness)`` — the gate's
-    beam-centre altitude at its near and far range edge, as a function of ground
+    beam-center altitude at its near and far range edge, as a function of ground
     distance, plus half its vertical extent there.  This is the curved-beam
     geometry the plots draw, replacing the flat ``u * tan(el)`` climb.
     """
@@ -837,7 +837,7 @@ def _endpoint_d_z(pt_xy: np.ndarray, sub: pd.DataFrame, origin: tuple[float, flo
         rx = pt_xy[:, 0] - sub["x"].to_numpy(dtype=np.float64)
         ry = pt_xy[:, 1] - sub["y"].to_numpy(dtype=np.float64)
         az = np.deg2rad(sub["azimuth"].to_numpy(dtype=np.float64))
-        # Along-beam offset of the endpoint from the gate centre.
+        # Along-beam offset of the endpoint from the gate center.
         u = rx * np.sin(az) + ry * np.cos(az)
         d_center = 0.5 * (d_near + d_far)
         span = d_far - d_near
@@ -874,7 +874,7 @@ def _cross_section_gates(
     to polars when joining them onto the data frame.
 
     Returns one row per crossed gate with its cross-section geometry: the gate
-    centre ``(d_center, z_center)`` and ``cs_polygon`` — the 4-corner shapely polygon
+    center ``(d_center, z_center)`` and ``cs_polygon`` — the 4-corner shapely polygon
     in the (distance-along-line [m], altitude [m ASL]) plane, built by
     offsetting the chord perpendicularly by ±dA (the vertical half-beamwidth
     extent).  ``d`` is measured from ``p1``.
@@ -889,7 +889,7 @@ def _cross_section_gates(
         raise ValueError("cross-section line is degenerate (< 1 m long).")
     half_bw_tan = float(np.tan(np.deg2rad(beamwidth_deg / 2.0)))
 
-    # --- vectorised point-to-segment prefilter (replaces the KDTree) ---
+    # --- vectorized point-to-segment prefilter (replaces the KDTree) ---
     px = cs_t["x"].to_numpy(dtype=np.float64)
     py = cs_t["y"].to_numpy(dtype=np.float64)
     diag = np.hypot(cs_t["dR"].to_numpy(dtype=np.float64), cs_t["dA"].to_numpy(dtype=np.float64)) * 1.05
@@ -946,7 +946,7 @@ def _cross_section_gates(
     )
 
     out = sub.copy()
-    # Only the gate centre and its footprint are published.  The chord endpoints
+    # Only the gate center and its footprint are published.  The chord endpoints
     # d_near/d_far and z_near/z_far are what the polygon is built from, so
     # emitting them as well restated `cs_polygon` in scalar form.
     out["d_center"] = 0.5 * (d_near + d_far)
